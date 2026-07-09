@@ -8,6 +8,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { headers } from 'next/headers';
 import type { SwipeAction, SwipedMovie, Recommendation } from '@/types/movie';
 import type { MovieDetail } from '@/types/library';
+import type { ActionResult } from '@/types/actions';
 import { isValidRecommendation } from '@/types/movie';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { sanitiseForPrompt } from '@/lib/sanitise';
@@ -47,8 +48,9 @@ function movieLabel(m: SwipedMovie): string {
 export async function saveSwipe(
   movie: MovieDetail,
   action: SwipeAction
-): Promise<void> {
-  if (!movie.tmdbId || movie.tmdbId <= 0) return;
+): Promise<ActionResult<null>> {
+  // Invalid id: silently succeed as a no-op (preserves prior fire-and-forget behaviour).
+  if (!movie.tmdbId || movie.tmdbId <= 0) return { ok: true, data: null };
 
   const supabase = await createClient();
   const {
@@ -56,25 +58,32 @@ export async function saveSwipe(
   } = await supabase.auth.getUser();
 
   if (!user) {
-    throw new Error('Unauthorized');
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
   }
 
-  const { error } = await supabase.rpc('record_swipe_event', {
-    p_tmdb_movie_id: movie.tmdbId,
-    p_action: action,
-    p_movie_title: movie.title || undefined,
-    p_movie_year: movie.year || undefined,
-    p_movie_director: movie.director || undefined,
-    p_movie_genre: movie.genre || undefined,
-    p_poster_url: movie.posterUrl || undefined,
-    p_movie_synopsis: movie.synopsis || undefined,
-    p_recommendation_reason: movie.recommendationReason || undefined,
-    p_source: movie.source || undefined,
-  });
+  try {
+    const { error } = await supabase.rpc('record_swipe_event', {
+      p_tmdb_movie_id: movie.tmdbId,
+      p_action: action,
+      p_movie_title: movie.title || undefined,
+      p_movie_year: movie.year || undefined,
+      p_movie_director: movie.director || undefined,
+      p_movie_genre: movie.genre || undefined,
+      p_poster_url: movie.posterUrl || undefined,
+      p_movie_synopsis: movie.synopsis || undefined,
+      p_recommendation_reason: movie.recommendationReason || undefined,
+      p_source: movie.source || undefined,
+    });
 
-  if (error) {
-    logger.warn('SAVE_SWIPE_RPC_FAILED', { error: error.message });
-    throw new Error('Failed to save your swipe. Please try again.');
+    if (error) {
+      logger.warn('SAVE_SWIPE_RPC_FAILED', { error: error.message });
+      return { ok: false, code: 'save_failed', message: 'Failed to save your swipe. Please try again.' };
+    }
+
+    return { ok: true, data: null };
+  } catch (error) {
+    logger.error('SAVE_SWIPE_FAILED', { error: String(error) });
+    return { ok: false, code: 'save_failed', message: 'Failed to save your swipe. Please try again.' };
   }
 }
 
@@ -83,7 +92,7 @@ export async function saveSwipe(
  */
 export async function getMovieRecommendation(
   swipedMovies: SwipedMovie[]
-): Promise<Recommendation | null> {
+): Promise<ActionResult<Recommendation | null>> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -91,15 +100,18 @@ export async function getMovieRecommendation(
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    throw new Error('Unauthorized');
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
   }
 
   const ip = await getClientIp();
   const rateCheck = await checkRateLimit(ip, 'getMovieRecommendation', user.id);
   if (!rateCheck.allowed) {
-    throw new Error(
-      `Rate limit exceeded. Please try again in ${rateCheck.retryAfter} seconds.`
-    );
+    return {
+      ok: false,
+      code: 'rate_limited',
+      message: `Rate limit exceeded. Please try again in ${rateCheck.retryAfter} seconds.`,
+      retryAfter: rateCheck.retryAfter,
+    };
   }
 
   try {
@@ -165,7 +177,7 @@ Return ONLY valid JSON — no markdown, no preamble.
     const text = response.text;
     if (!text) {
       logger.error('GEMINI_EMPTY_RESPONSE');
-      return null;
+      return { ok: true, data: null };
     }
 
     const parsed: unknown = JSON.parse(text);
@@ -173,7 +185,7 @@ Return ONLY valid JSON — no markdown, no preamble.
       logger.error('GEMINI_INVALID_SHAPE', {
         preview: String(JSON.stringify(parsed)).slice(0, 200),
       });
-      return null;
+      return { ok: true, data: null };
     }
 
     const recommendation: Recommendation = { ...parsed, source: 'recommendation' };
@@ -203,12 +215,9 @@ Return ONLY valid JSON — no markdown, no preamble.
       }
     }
 
-    return recommendation;
+    return { ok: true, data: recommendation };
   } catch (error) {
-    if (error instanceof Error && error.message.includes('Rate limit')) {
-      throw error;
-    }
     logger.error('RECOMMENDATION_FAILED', { error: String(error) });
-    return null;
+    return { ok: false, code: 'load_failed', message: 'Failed to get recommendation. Please try again.' };
   }
 }

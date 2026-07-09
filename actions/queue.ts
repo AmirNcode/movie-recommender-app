@@ -7,6 +7,7 @@ import { logger } from '@/lib/logger';
 import { getActiveQueueForUser, getCachedMoviesByIds, getQueueConfig, getQueueState, upsertMoviesCache } from '@/lib/movie-queue';
 import { checkRateLimit } from '@/lib/rate-limit';
 import type { MovieCandidate } from '@/types/movie';
+import type { ActionFailure, ActionResult } from '@/types/actions';
 import type { CachedMovie, QueuedMovie, SourceTier } from '@/types/queue';
 
 async function getClientIp(): Promise<string> {
@@ -16,15 +17,21 @@ async function getClientIp(): Promise<string> {
   return forwarded.split(',')[0]?.trim() || '127.0.0.1';
 }
 
-async function enforceRateLimit(
+async function checkActionRateLimit(
   action: 'getQueuedMovies' | 'refillQueuedMovies',
   userId: string
-): Promise<void> {
+): Promise<ActionFailure | null> {
   const ip = await getClientIp();
   const result = await checkRateLimit(ip, action, userId);
   if (!result.allowed) {
-    throw new Error(`Rate limit exceeded. Please try again in ${result.retryAfter} seconds.`);
+    return {
+      ok: false,
+      code: 'rate_limited',
+      message: `Rate limit exceeded. Please try again in ${result.retryAfter} seconds.`,
+      retryAfter: result.retryAfter,
+    };
   }
+  return null;
 }
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -45,15 +52,17 @@ function buildUrl(path: string, params: Record<string, string | number | boolean
   return url.toString();
 }
 
-async function getAuthenticatedUserId(): Promise<string> {
+async function resolveUserId(): Promise<{ ok: true; userId: string } | ActionFailure> {
   const supabase = await createClient();
   const {
     data: { user },
     error,
   } = await supabase.auth.getUser();
 
-  if (error || !user) throw new Error('Unauthorized');
-  return user.id;
+  if (error || !user) {
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
+  }
+  return { ok: true, userId: user.id };
 }
 
 async function getExcludedMovieIds(userId: string): Promise<Set<number>> {
@@ -245,48 +254,73 @@ async function fillQueueForUser(userId: string, minimumToAdd: number): Promise<v
   }
 }
 
-export async function getQueuedMovies(limit = getQueueConfig().deliverBatchSize): Promise<MovieCandidate[]> {
-  const userId = await getAuthenticatedUserId();
-  await enforceRateLimit('getQueuedMovies', userId);
-  const queueConfig = getQueueConfig();
-  const queueState = await getQueueState(userId);
+export async function getQueuedMovies(
+  limit = getQueueConfig().deliverBatchSize
+): Promise<ActionResult<MovieCandidate[]>> {
+  const auth = await resolveUserId();
+  if (!auth.ok) return auth;
+  const denied = await checkActionRateLimit('getQueuedMovies', auth.userId);
+  if (denied) return denied;
 
-  if (queueState.activeCount < queueConfig.lowWatermark) {
-    await fillQueueForUser(userId, queueConfig.targetSize - queueState.activeCount);
+  try {
+    const userId = auth.userId;
+    const queueConfig = getQueueConfig();
+    const queueState = await getQueueState(userId);
+
+    if (queueState.activeCount < queueConfig.lowWatermark) {
+      await fillQueueForUser(userId, queueConfig.targetSize - queueState.activeCount);
+    }
+
+    const queued = await getActiveQueueForUser(userId, limit);
+    if (queued.length === 0) {
+      await fillQueueForUser(userId, queueConfig.targetSize);
+    }
+
+    const finalQueued = queued.length > 0 ? queued : await getActiveQueueForUser(userId, limit);
+
+    return {
+      ok: true,
+      data: finalQueued.map((movie) => ({
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        year: movie.year,
+        director: movie.director,
+        genre: movie.genre,
+        synopsis: movie.synopsis,
+        posterUrl: movie.posterUrl,
+      })),
+    };
+  } catch (error) {
+    logger.error('GET_QUEUED_MOVIES_FAILED', { error: String(error) });
+    return { ok: false, code: 'load_failed', message: 'Failed to load movies. Please try again.' };
   }
-
-  const queued = await getActiveQueueForUser(userId, limit);
-  if (queued.length === 0) {
-    await fillQueueForUser(userId, queueConfig.targetSize);
-  }
-
-  const finalQueued = queued.length > 0 ? queued : await getActiveQueueForUser(userId, limit);
-
-  return finalQueued.map((movie) => ({
-    tmdbId: movie.tmdbId,
-    title: movie.title,
-    year: movie.year,
-    director: movie.director,
-    genre: movie.genre,
-    synopsis: movie.synopsis,
-    posterUrl: movie.posterUrl,
-  }));
 }
 
-export async function refillQueuedMovies(): Promise<MovieCandidate[]> {
-  const userId = await getAuthenticatedUserId();
-  await enforceRateLimit('refillQueuedMovies', userId);
-  const queueConfig = getQueueConfig();
-  await fillQueueForUser(userId, queueConfig.targetSize);
-  const queued = await getActiveQueueForUser(userId, queueConfig.deliverBatchSize);
+export async function refillQueuedMovies(): Promise<ActionResult<MovieCandidate[]>> {
+  const auth = await resolveUserId();
+  if (!auth.ok) return auth;
+  const denied = await checkActionRateLimit('refillQueuedMovies', auth.userId);
+  if (denied) return denied;
 
-  return queued.map((movie) => ({
-    tmdbId: movie.tmdbId,
-    title: movie.title,
-    year: movie.year,
-    director: movie.director,
-    genre: movie.genre,
-    synopsis: movie.synopsis,
-    posterUrl: movie.posterUrl,
-  }));
+  try {
+    const queueConfig = getQueueConfig();
+    await fillQueueForUser(auth.userId, queueConfig.targetSize);
+    const queued = await getActiveQueueForUser(auth.userId, queueConfig.deliverBatchSize);
+
+    return {
+      ok: true,
+      data: queued.map((movie) => ({
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        year: movie.year,
+        director: movie.director,
+        genre: movie.genre,
+        synopsis: movie.synopsis,
+        posterUrl: movie.posterUrl,
+      })),
+    };
+  } catch (error) {
+    logger.error('REFILL_QUEUED_MOVIES_FAILED', { error: String(error) });
+    return { ok: false, code: 'load_failed', message: 'Failed to load movies. Please try again.' };
+  }
 }

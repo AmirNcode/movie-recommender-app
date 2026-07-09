@@ -2,7 +2,9 @@
 
 import { createClient } from '@/lib/supabase/server';
 import type { HistoryItem, ProfileDetails } from '@/types/library';
+import type { ActionResult } from '@/types/actions';
 import type { Database } from '@/types/supabase';
+import { logger } from '@/lib/logger';
 
 function mapHistoryRow(row: Database['public']['Tables']['swipe_events']['Row']): HistoryItem | null {
   if (row.action === 'unwatched') return null;
@@ -23,48 +25,66 @@ function mapHistoryRow(row: Database['public']['Tables']['swipe_events']['Row'])
   };
 }
 
-export async function getSwipeHistory(): Promise<HistoryItem[]> {
+export async function getSwipeHistory(): Promise<ActionResult<HistoryItem[]>> {
   const supabase = await createClient();
   const {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser();
 
-  if (authError) throw new Error(authError.message);
-  if (!user) throw new Error('Unauthorized');
+  if (authError || !user) {
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
+  }
 
-  const { data, error } = await supabase
-    .from('swipe_events')
-    .select('*')
-    .eq('user_id', user.id)
-    .in('action', ['watched', 'loved', 'disliked'])
-    .order('created_at', { ascending: false });
+  try {
+    const { data, error } = await supabase
+      .from('swipe_events')
+      .select('*')
+      .eq('user_id', user.id)
+      .in('action', ['watched', 'loved', 'disliked'])
+      .order('created_at', { ascending: false });
 
-  if (error) throw new Error(error.message);
+    if (error) {
+      logger.warn('GET_SWIPE_HISTORY_FAILED', { error: error.message });
+      return { ok: false, code: 'load_failed', message: 'Failed to load your history.' };
+    }
 
-  return (data ?? []).map(mapHistoryRow).filter(Boolean) as HistoryItem[];
+    return { ok: true, data: (data ?? []).map(mapHistoryRow).filter(Boolean) as HistoryItem[] };
+  } catch (error) {
+    logger.error('GET_SWIPE_HISTORY_FAILED', { error: String(error) });
+    return { ok: false, code: 'load_failed', message: 'Failed to load your history.' };
+  }
 }
 
-export async function getCurrentUserProfile(): Promise<ProfileDetails> {
+export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetails>> {
   const supabase = await createClient();
   const {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser();
 
-  if (authError) throw new Error(authError.message);
-  if (!user) throw new Error('Unauthorized');
+  if (authError || !user) {
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
+  }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('name')
-    .eq('id', user.id)
-    .maybeSingle();
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('name')
+      .eq('id', user.id)
+      .maybeSingle();
 
-  return {
-    email: user.email ?? null,
-    name: profile?.name ?? null,
-  };
+    return {
+      ok: true,
+      data: {
+        email: user.email ?? null,
+        name: profile?.name ?? null,
+      },
+    };
+  } catch (error) {
+    logger.error('GET_PROFILE_FAILED', { error: String(error) });
+    return { ok: false, code: 'load_failed', message: 'Failed to load your profile.' };
+  }
 }
 
 export async function updateProfileName(formData: FormData): Promise<{ status: 'success' } | { status: 'error'; error: string }> {

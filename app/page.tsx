@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, Film } from 'lucide-react';
 import { getMovieRecommendation, saveSwipe } from '@/actions/movies';
@@ -20,6 +21,7 @@ import { SwipeControls } from '@/components/swipe-controls';
 import { WatchlistPanel } from '@/components/watchlist-panel';
 import type { HistoryItem, MovieDetail, ProfileDetails, WatchlistItem } from '@/types/library';
 import type { Movie, SwipeAction, SwipedMovie, Recommendation } from '@/types/movie';
+import type { ActionFailure } from '@/types/actions';
 
 const LOADING_MESSAGES = [
   'Popping the popcorn...',
@@ -118,6 +120,7 @@ function detailToMovie(detail: MovieDetail): Movie {
 }
 
 export default function Filmmoo() {
+  const router = useRouter();
   const [activeView, setActiveView] = useState<View>('swipe');
   const [movies, setMovies] = useState<Movie[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -147,40 +150,55 @@ export default function Filmmoo() {
     errorTimerRef.current = setTimeout(() => setErrorMessage(null), 5000);
   }, []);
 
+  /**
+   * Central handler for a failed ActionResult: bounce to /login on an auth
+   * failure, otherwise surface the server-provided (safe) message. The
+   * rate_limited message already embeds retryAfter.
+   */
+  const reportFailure = useCallback((failure: ActionFailure) => {
+    if (failure.code === 'unauthorized') {
+      router.push('/login');
+      return;
+    }
+    showError(failure.message);
+  }, [router, showError]);
+
   const refreshWatchlist = useCallback(async () => {
-    const watchlist = await getWatchlistItems();
-    setWatchlistItems(watchlist);
-  }, []);
+    const result = await getWatchlistItems();
+    if (result.ok) setWatchlistItems(result.data);
+    else reportFailure(result);
+  }, [reportFailure]);
 
   const refreshHistory = useCallback(async () => {
-    const history = await getSwipeHistory();
-    setHistoryItems(history);
-  }, []);
+    const result = await getSwipeHistory();
+    if (result.ok) setHistoryItems(result.data);
+    else reportFailure(result);
+  }, [reportFailure]);
 
   const refreshProfile = useCallback(async () => {
-    const currentProfile = await getCurrentUserProfile();
-    setProfile(currentProfile);
-  }, []);
+    const result = await getCurrentUserProfile();
+    if (result.ok) setProfile(result.data);
+    else reportFailure(result);
+  }, [reportFailure]);
 
   const refreshLibraryData = useCallback(async () => {
-    try {
-      const [watchlist, history, currentProfile] = await Promise.all([
-        getWatchlistItems(),
-        getSwipeHistory(),
-        getCurrentUserProfile(),
-      ]);
-      setWatchlistItems(watchlist);
-      setHistoryItems(history);
-      setProfile(currentProfile);
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Failed to load your library.');
-    }
-  }, [showError]);
+    await Promise.all([refreshWatchlist(), refreshHistory(), refreshProfile()]);
+  }, [refreshWatchlist, refreshHistory, refreshProfile]);
 
   const fetchMoreMovies = useCallback(async (forceRefill = false) => {
     setIsFetching(true);
     try {
-      const rawMovies = forceRefill ? await refillQueuedMovies() : await getQueuedMovies();
+      const result = forceRefill ? await refillQueuedMovies() : await getQueuedMovies();
+      if (!result.ok) {
+        // Stop the prefetch loop when rate-limited so we don't hammer a
+        // limited endpoint every cooldown window indefinitely.
+        if (result.code === 'rate_limited') {
+          exhaustedDeckRef.current = true;
+        }
+        reportFailure(result);
+        return;
+      }
+      const rawMovies = result.data;
       exhaustedDeckRef.current = rawMovies.length === 0;
       const existingIds = new Set(movies.slice(currentIndex).map((movie) => movie.tmdbId));
       const deduped = rawMovies.filter((movie) => !existingIds.has(movie.tmdbId));
@@ -193,16 +211,12 @@ export default function Filmmoo() {
         exhaustedDeckRef.current = true;
       }
       setMovies((prev) => [...prev, ...newMovies]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load movies. Please try again.';
-      if (message.includes('Rate limit exceeded')) {
-        exhaustedDeckRef.current = true;
-      }
-      showError(message);
+    } catch {
+      showError('Failed to load movies. Please try again.');
     } finally {
       setIsFetching(false);
     }
-  }, [currentIndex, movies, showError]);
+  }, [currentIndex, movies, reportFailure, showError]);
 
   useEffect(() => {
     exhaustedDeckRef.current = false;
@@ -245,8 +259,8 @@ export default function Filmmoo() {
     }
 
     try {
-      const inWatchlist = await isMovieInWatchlist(tmdbId);
-      setIsInWatchlist(inWatchlist);
+      const result = await isMovieInWatchlist(tmdbId);
+      setIsInWatchlist(result.ok ? result.data : false);
     } catch {
       setIsInWatchlist(false);
     }
@@ -265,10 +279,14 @@ export default function Filmmoo() {
   }, [selectedDetail, syncWatchlistStateForMovie]);
 
   const persistSwipe = useCallback((movie: MovieDetail, action: SwipeAction) => {
-    saveSwipe(movie, action).catch((error) => {
-      showError(error instanceof Error ? error.message : 'Failed to save your swipe.');
-    });
-  }, [showError]);
+    void saveSwipe(movie, action)
+      .then((result) => {
+        if (!result.ok) reportFailure(result);
+      })
+      .catch(() => {
+        showError('Failed to save your swipe.');
+      });
+  }, [reportFailure, showError]);
 
   const handleSwipe = useCallback((action: SwipeAction, movie: Movie) => {
     persistSwipe({
@@ -312,17 +330,21 @@ export default function Filmmoo() {
 
     try {
       const result = await getMovieRecommendation(payload);
-      if (result) {
-        setRecommendation(result);
+      if (!result.ok) {
+        reportFailure(result);
+      } else if (result.data) {
+        setRecommendation(result.data);
         setActiveView('recommendation');
+      } else {
+        showError('No recommendation available right now. Please try again.');
       }
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Failed to get recommendation. Please try again.');
+    } catch {
+      showError('Failed to get recommendation. Please try again.');
     } finally {
       clearInterval(interval);
       setIsRecommending(false);
     }
-  }, [showError, swipedMovies]);
+  }, [reportFailure, showError, swipedMovies]);
 
   const handleRecommendationRating = useCallback(async (action: Exclude<SwipeAction, 'unwatched'>) => {
     if (!recommendation) return;
@@ -360,22 +382,28 @@ export default function Filmmoo() {
     watchlistTimerRef.current = setTimeout(() => setWatchlistMessage(null), 2000);
 
     try {
-      const actualState = await setWatchlistItem(movie, adding);
-      setIsInWatchlist(actualState);
+      const result = await setWatchlistItem(movie, adding);
+      if (!result.ok) {
+        setIsInWatchlist(!adding);
+        reportFailure(result);
+        return !adding;
+      }
+      setIsInWatchlist(result.data.inWatchlist);
       await refreshWatchlist();
-      return actualState;
-    } catch (error) {
+      return result.data.inWatchlist;
+    } catch {
       setIsInWatchlist(!adding);
-      showError(error instanceof Error ? error.message : 'Failed to update watchlist.');
+      showError('Failed to update watchlist.');
       return !adding;
     }
-  }, [isInWatchlist, refreshWatchlist, showError]);
+  }, [isInWatchlist, refreshWatchlist, reportFailure, showError]);
 
   const handleWatchlistRate = useCallback(async (action: Exclude<SwipeAction, 'unwatched'>) => {
     if (!selectedDetail || selectedDetail.context !== 'watchlist') return;
     const movie = selectedDetail.movie;
     persistSwipe({ ...movie, source: movie.source ?? 'watchlist' }, action);
-    await setWatchlistItem(movie, false);
+    const removeResult = await setWatchlistItem(movie, false);
+    if (!removeResult.ok) reportFailure(removeResult);
     try {
       await Promise.all([refreshWatchlist(), refreshHistory()]);
     } catch (error) {
@@ -383,7 +411,7 @@ export default function Filmmoo() {
     }
     setSelectedDetail(null);
     setActiveView('history');
-  }, [persistSwipe, refreshHistory, refreshWatchlist, selectedDetail, showError]);
+  }, [persistSwipe, refreshHistory, refreshWatchlist, reportFailure, selectedDetail, showError]);
 
   const loadViewData = useCallback((view: View) => {
     if (view === 'watchlist') {
