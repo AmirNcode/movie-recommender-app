@@ -7,9 +7,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/lib/logger';
 import { getActiveQueueForUser, getCachedMoviesByIds, getQueueConfig, getQueueState, upsertMoviesCache } from '@/lib/movie-queue';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { assertServerEnv } from '@/lib/env';
 import type { MovieCandidate } from '@/types/movie';
 import type { ActionFailure, ActionResult } from '@/types/actions';
 import type { CachedMovie, QueuedMovie, SourceTier } from '@/types/queue';
+
+// Throws on first server-side import at runtime if required env is missing.
+assertServerEnv();
 
 async function getClientIp(): Promise<string> {
   const headersList = await headers();

@@ -16,7 +16,11 @@ import { logger } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { getCachedMoviesByIds } from '@/lib/movie-queue';
 import { validateMovie } from '@/lib/validate-movie';
+import { assertServerEnv } from '@/lib/env';
 import { buildPosterUrl, pickBestTmdbMatch } from '@/lib/tmdb';
+
+// Throws on first server-side import at runtime if required env is missing.
+assertServerEnv();
 
 /** Minimal movie metadata used to describe the user's taste to the model. */
 type TasteEntry = { title: string; year: number; director: string; genre: string };
