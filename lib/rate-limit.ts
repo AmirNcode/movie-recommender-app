@@ -29,9 +29,13 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     getMovieRecommendation: { maxRequests: 10, windowMs: 60_000 },
     getQueuedMovies: { maxRequests: 30, windowMs: 60_000 },
     refillQueuedMovies: { maxRequests: 10, windowMs: 60_000 },
+    // Fast swiping is legitimate; 2/sec sustained is not.
+    saveSwipe: { maxRequests: 120, windowMs: 60_000 },
+    setWatchlistItem: { maxRequests: 30, windowMs: 60_000 },
 };
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/lib/logger';
 
 /**
  * Checks whether a request from the given IP for the given action
@@ -49,7 +53,9 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
     const config = ACTION_LIMITS[action];
     if (!config) {
-        // Unknown action — allow by default (fail-open for unconfigured actions)
+        // Unknown action — fail-open, but log loudly so a typo can't silently
+        // disable rate limiting for a real action.
+        logger.error('RATE_LIMIT_UNCONFIGURED_ACTION', { action });
         return { allowed: true };
     }
 

@@ -180,6 +180,17 @@ export async function saveSwipe(
     return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
   }
 
+  const ip = await getClientIp();
+  const rateCheck = await checkRateLimit(ip, 'saveSwipe', user.id);
+  if (!rateCheck.allowed) {
+    return {
+      ok: false,
+      code: 'rate_limited',
+      message: `Rate limit exceeded. Please try again in ${rateCheck.retryAfter} seconds.`,
+      retryAfter: rateCheck.retryAfter,
+    };
+  }
+
   try {
     const { error } = await supabase.rpc('record_swipe_event', {
       p_tmdb_movie_id: clean.tmdbId,
