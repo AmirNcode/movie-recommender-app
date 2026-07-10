@@ -5,7 +5,7 @@ import { getCachedMoviesByIds, upsertMoviesCache } from '@/lib/movie-queue';
 import { ONBOARDING_TITLES } from '@/lib/onboarding-titles';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getClientIp } from '@/lib/request-ip';
-import { hydrateMovie } from '@/actions/queue';
+import { hydrateMovie } from '@/lib/tmdb-discovery';
 import { logger } from '@/lib/logger';
 import type { ActionResult } from '@/types/actions';
 import type { MovieCandidate } from '@/types/movie';

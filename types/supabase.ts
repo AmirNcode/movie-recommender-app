@@ -20,6 +20,7 @@ export type Database = {
           director: string | null
           genre: string | null
           original_language: string | null
+          pool_rank: number | null
           popularity: number | null
           poster_url: string | null
           release_date: string | null
@@ -40,6 +41,7 @@ export type Database = {
           director?: string | null
           genre?: string | null
           original_language?: string | null
+          pool_rank?: number | null
           popularity?: number | null
           poster_url?: string | null
           release_date?: string | null
@@ -60,6 +62,7 @@ export type Database = {
           director?: string | null
           genre?: string | null
           original_language?: string | null
+          pool_rank?: number | null
           popularity?: number | null
           poster_url?: string | null
           release_date?: string | null
@@ -327,6 +330,18 @@ export type Database = {
         Args: { p_movies: Json; p_user_id: string }
         Returns: number
       }
+      fill_queue_from_pool: {
+        Args: {
+          p_count: number
+          p_genres?: string[]
+          p_min_vote?: number
+          p_user_id: string
+          p_year_from?: number
+          p_year_to?: number
+        }
+        Returns: number
+      }
+      rebuild_movie_pool: { Args: { p_tmdb_ids: number[] }; Returns: number }
       record_swipe_event: {
         Args: {
           p_action: Database["public"]["Enums"]["swipe_action"]
