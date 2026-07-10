@@ -164,7 +164,7 @@ export async function hydrateMovie(
   const res = await fetch(
     buildTmdbUrl(`/movie/${tmdbId}`, {
       api_key: apiKey,
-      append_to_response: 'credits',
+      append_to_response: 'credits,videos',
       language: 'en-US',
     }),
     { cache: 'no-store' }
@@ -187,6 +187,10 @@ export async function hydrateMovie(
     .slice(0, 3)
     .map((actor: { name: string }) => actor.name);
 
+  const trailerKey = (detail.videos?.results ?? []).find(
+    (v: { type?: string; site?: string; key?: string }) => v.type === 'Trailer' && v.site === 'YouTube'
+  )?.key;
+
   return {
     tmdbId: Number(detail.id),
     title: detail.title as string,
@@ -202,6 +206,7 @@ export async function hydrateMovie(
     voteCount: typeof detail.vote_count === 'number' ? detail.vote_count : undefined,
     originalLanguage: detail.original_language ?? undefined,
     sourceTier: tier,
+    trailerKey: typeof trailerKey === 'string' ? trailerKey : undefined,
   };
 }
 

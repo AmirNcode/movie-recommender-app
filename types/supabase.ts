@@ -29,6 +29,7 @@ export type Database = {
           title: string
           tmdb_movie_id: number
           top_actors: string[]
+          trailer_key: string | null
           updated_at: string
           vote_average: number | null
           vote_count: number | null
@@ -50,6 +51,7 @@ export type Database = {
           title: string
           tmdb_movie_id: number
           top_actors?: string[]
+          trailer_key?: string | null
           updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
@@ -71,6 +73,7 @@ export type Database = {
           title?: string
           tmdb_movie_id?: number
           top_actors?: string[]
+          trailer_key?: string | null
           updated_at?: string
           vote_average?: number | null
           vote_count?: number | null

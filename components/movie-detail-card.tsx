@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Eye, Film, Heart, Loader2, Plus, Share2, ThumbsDown } from 'lucide-react';
-import { getWatchProviders, shareRecommendation } from '@/actions/movies';
+import { Check, Eye, Film, Heart, Loader2, PlayCircle, Plus, Share2, ThumbsDown, X } from 'lucide-react';
+import { getTrailer, getWatchProviders, shareRecommendation } from '@/actions/movies';
 import type { MovieDetail } from '@/types/library';
 import type { SwipeAction, WatchProvider, WatchProviderData } from '@/types/movie';
 
@@ -125,6 +125,8 @@ export function MovieDetailCard({
   const [providers, setProviders] = useState<WatchProviderData | null>(null);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
+  const [trailerKey, setTrailerKey] = useState<string | null>(null);
+  const [showTrailer, setShowTrailer] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
   const tmdbId = movie.tmdbId;
@@ -223,6 +225,33 @@ export function MovieDetailCard({
     };
   }, [tmdbId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTrailer() {
+      await Promise.resolve();
+      if (cancelled) return;
+
+      setShowTrailer(false);
+      setTrailerKey(null);
+      if (!tmdbId || tmdbId <= 0) return;
+
+      try {
+        const result = await getTrailer(tmdbId);
+        if (cancelled) return;
+        setTrailerKey(result.ok ? result.data.trailerKey : null);
+      } catch {
+        if (!cancelled) setTrailerKey(null);
+      }
+    }
+
+    void loadTrailer();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbId]);
+
   const watchProvidersRow = useMemo(
     () => <WatchProvidersRow providers={providers} isLoading={providersLoading} error={providersError} />,
     [providers, providersError, providersLoading]
@@ -268,6 +297,17 @@ export function MovieDetailCard({
               className="absolute top-4 left-4 z-50 w-12 h-12 rounded-full bg-black/40 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/60 transition-colors border border-white/20 shadow-lg disabled:opacity-60"
             >
               {isSharing ? <Loader2 size={22} className="animate-spin" /> : <Share2 size={22} />}
+            </button>
+          ) : null}
+
+          {trailerKey ? (
+            <button
+              onClick={() => setShowTrailer(true)}
+              aria-label="Watch trailer"
+              className="absolute left-1/2 top-[30%] -translate-x-1/2 -translate-y-1/2 z-30 flex items-center gap-2 rounded-full bg-black/50 backdrop-blur-md text-white px-5 py-3 border border-white/20 shadow-lg hover:bg-black/70 transition-colors"
+            >
+              <PlayCircle size={20} />
+              <span className="text-xs font-bold uppercase tracking-widest">Trailer</span>
             </button>
           ) : null}
 
@@ -360,6 +400,37 @@ export function MovieDetailCard({
           </button>
         </div>
       </main>
+
+      <AnimatePresence>
+        {showTrailer && trailerKey ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4"
+            onClick={() => setShowTrailer(false)}
+          >
+            <div className="relative w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowTrailer(false)}
+                aria-label="Close trailer"
+                className="absolute -top-11 right-0 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <div className="aspect-video w-full overflow-hidden rounded-xl border border-white/10 bg-black">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1`}
+                  title={`${movie.title} trailer`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="h-full w-full"
+                />
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

@@ -19,7 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getCachedMoviesByIds } from '@/lib/movie-queue';
 import { validateMovie } from '@/lib/validate-movie';
 import { assertServerEnv } from '@/lib/env';
-import { buildPosterUrl, fetchWatchProviders, pickBestTmdbMatch } from '@/lib/tmdb';
+import { buildPosterUrl, fetchTrailerKey, fetchWatchProviders, pickBestTmdbMatch } from '@/lib/tmdb';
 import { getClientIp } from '@/lib/request-ip';
 
 // Throws on first server-side import at runtime if required env is missing.
@@ -433,6 +433,72 @@ export async function getWatchProviders(tmdbId: number): Promise<ActionResult<Wa
   } catch (error) {
     logger.error('WATCH_PROVIDERS_FAILED', { tmdbId, error: String(error) });
     return { ok: false, code: 'load_failed', message: 'Failed to load streaming providers.' };
+  }
+}
+
+/**
+ * Returns the YouTube key for a movie's trailer, if one is known.
+ *
+ * Cache-first: once a `movies_cache` row exists it is treated as authoritative
+ * (the nightly pool cron — S10 — backfills `trailer_key` for older rows), so a
+ * `null` there means "checked, no trailer" rather than "never checked". Ids
+ * with no cache row (e.g. a fresh Gemini recommendation not yet in the pool)
+ * fall back to a live TMDB fetch, best-effort persisted if the row exists.
+ */
+export async function getTrailer(tmdbId: number): Promise<ActionResult<{ trailerKey: string | null }>> {
+  if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
+    return { ok: false, code: 'validation', message: 'Invalid movie id.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
+  }
+
+  const ip = await getClientIp();
+  const rateCheck = await checkRateLimit(ip, 'getTrailer', user.id);
+  if (!rateCheck.allowed) {
+    return {
+      ok: false,
+      code: 'rate_limited',
+      message: `Rate limit exceeded. Please try again in ${rateCheck.retryAfter} seconds.`,
+      retryAfter: rateCheck.retryAfter,
+    };
+  }
+
+  try {
+    const admin = createAdminClient();
+    const apiKey = process.env.TMDB_API_KEY;
+
+    if (!admin || !apiKey) {
+      logger.error('TRAILER_UNCONFIGURED', { hasAdmin: Boolean(admin), hasApiKey: Boolean(apiKey) });
+      return { ok: false, code: 'load_failed', message: 'Failed to load trailer.' };
+    }
+
+    const { data: cachedRow, error: cacheError } = await admin
+      .from('movies_cache')
+      .select('trailer_key')
+      .eq('tmdb_movie_id', tmdbId)
+      .maybeSingle();
+
+    if (cacheError) {
+      logger.warn('TRAILER_CACHE_READ_FAILED', { tmdbId, error: cacheError.message });
+    }
+
+    if (cachedRow) {
+      return { ok: true, data: { trailerKey: cachedRow.trailer_key ?? null } };
+    }
+
+    const trailerKey = await fetchTrailerKey(apiKey, tmdbId);
+    return { ok: true, data: { trailerKey } };
+  } catch (error) {
+    logger.error('TRAILER_FAILED', { tmdbId, error: String(error) });
+    return { ok: false, code: 'load_failed', message: 'Failed to load trailer.' };
   }
 }
 

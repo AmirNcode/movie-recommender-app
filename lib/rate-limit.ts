@@ -64,6 +64,7 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     saveSwipe: { maxRequests: 120, windowMs: 60_000 },
     setWatchlistItem: { maxRequests: 30, windowMs: 60_000 },
     getWatchProviders: { maxRequests: 30, windowMs: 60_000 },
+    getTrailer: { maxRequests: 30, windowMs: 60_000 },
     shareRecommendation: { maxRequests: 10, windowMs: 60_000 },
     // Destructive and irreversible; 2/hour is generous for a legitimate user.
     deleteAccount: { maxRequests: 2, windowMs: 60 * 60_000 },
