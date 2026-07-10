@@ -81,8 +81,8 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
         }}
       >
         <div className="text-xs uppercase tracking-widest text-white/40">Password</div>
-        <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" className="w-full h-12 bg-black/40 border border-white/10 rounded-2xl px-4 text-white" placeholder="New password" minLength={6} />
-        <button disabled={isPending || password.length < 6} className="w-full h-11 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold disabled:opacity-60">Update password</button>
+        <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" className="w-full h-12 bg-black/40 border border-white/10 rounded-2xl px-4 text-white" placeholder="New password" minLength={8} />
+        <button disabled={isPending || password.length < 8} className="w-full h-11 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold disabled:opacity-60">Update password</button>
       </form>
 
       <form action={logout}>

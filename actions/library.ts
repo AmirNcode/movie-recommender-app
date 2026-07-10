@@ -117,7 +117,7 @@ export async function updateEmail(formData: FormData): Promise<{ status: 'succes
 
 export async function updatePassword(formData: FormData): Promise<{ status: 'success' } | { status: 'error'; error: string }> {
   const password = String(formData.get('password') ?? '');
-  if (password.length < 6) return { status: 'error', error: 'Password must be at least 6 characters long' };
+  if (password.length < 8) return { status: 'error', error: 'Password must be at least 8 characters long' };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password });
