@@ -5,7 +5,6 @@
 'use server';
 
 import { GoogleGenAI, Type } from '@google/genai';
-import { headers } from 'next/headers';
 import type { SwipeAction, Recommendation } from '@/types/movie';
 import type { MovieDetail } from '@/types/library';
 import type { ActionResult } from '@/types/actions';
@@ -18,6 +17,7 @@ import { getCachedMoviesByIds } from '@/lib/movie-queue';
 import { validateMovie } from '@/lib/validate-movie';
 import { assertServerEnv } from '@/lib/env';
 import { buildPosterUrl, pickBestTmdbMatch } from '@/lib/tmdb';
+import { getClientIp } from '@/lib/request-ip';
 
 // Throws on first server-side import at runtime if required env is missing.
 assertServerEnv();
@@ -35,16 +35,6 @@ type TasteProfile = {
   seenTitles: string[];
 };
 
-/**
- * Reads the client IP from Next.js request headers.
- * Falls back to localhost for local development.
- */
-async function getClientIp(): Promise<string> {
-  const headersList = await headers();
-  const forwarded = headersList.get('x-vercel-forwarded-for') ?? headersList.get('x-forwarded-for');
-  if (!forwarded) return '127.0.0.1';
-  return forwarded.split(',')[0]?.trim() || '127.0.0.1';
-}
 
 /**
  * Builds a rich metadata string for a taste entry to give Gemini context

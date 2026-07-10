@@ -1,6 +1,5 @@
 'use server';
 
-import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -8,19 +7,13 @@ import { logger } from '@/lib/logger';
 import { getActiveQueueForUser, getCachedMoviesByIds, getQueueConfig, getQueueState, upsertMoviesCache } from '@/lib/movie-queue';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { assertServerEnv } from '@/lib/env';
+import { getClientIp } from '@/lib/request-ip';
 import type { MovieCandidate } from '@/types/movie';
 import type { ActionFailure, ActionResult } from '@/types/actions';
 import type { CachedMovie, QueuedMovie, SourceTier } from '@/types/queue';
 
 // Throws on first server-side import at runtime if required env is missing.
 assertServerEnv();
-
-async function getClientIp(): Promise<string> {
-  const headersList = await headers();
-  const forwarded = headersList.get('x-vercel-forwarded-for') ?? headersList.get('x-forwarded-for');
-  if (!forwarded) return '127.0.0.1';
-  return forwarded.split(',')[0]?.trim() || '127.0.0.1';
-}
 
 async function checkActionRateLimit(
   action: 'getQueuedMovies' | 'refillQueuedMovies',

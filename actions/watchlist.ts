@@ -1,6 +1,5 @@
 'use server';
 
-import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import type { MovieDetail, WatchlistItem } from '@/types/library';
 import type { ActionResult } from '@/types/actions';
@@ -8,13 +7,7 @@ import type { Database } from '@/types/supabase';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { validateMovie } from '@/lib/validate-movie';
 import { logger } from '@/lib/logger';
-
-async function getClientIp(): Promise<string> {
-  const headersList = await headers();
-  const forwarded = headersList.get('x-vercel-forwarded-for') ?? headersList.get('x-forwarded-for');
-  if (!forwarded) return '127.0.0.1';
-  return forwarded.split(',')[0]?.trim() || '127.0.0.1';
-}
+import { getClientIp } from '@/lib/request-ip';
 
 function mapWatchlistRow(row: Database['public']['Tables']['watchlists']['Row']): WatchlistItem {
   return {
