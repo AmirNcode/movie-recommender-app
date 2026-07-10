@@ -83,18 +83,17 @@ export async function checkRateLimit(
         ip_action_key: key,
         max_reqs: config.maxRequests,
         window_interval: intervalStr,
-    } as any);
+    });
 
     if (error) {
         logger.error('RATE_LIMIT_BACKEND_DOWN', { action });
         return { allowed: config.failMode !== 'closed' };
     }
 
-    // Parse the JSON result returned by the RPC
-    const result = data as any;
-    
-    // In case string came back instead of parsed json (due to typed RPC mismatches)
-    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+    // The RPC's return type is untyped Json; the function body always
+    // returns a JSON object, but parse the string case defensively.
+    const parsed: { allowed: boolean; retryAfter?: number } | null =
+        typeof data === 'string' ? JSON.parse(data) : (data as { allowed: boolean; retryAfter?: number } | null);
 
     if (parsed && parsed.allowed === false) {
         return {

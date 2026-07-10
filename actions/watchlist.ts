@@ -21,7 +21,7 @@ function mapWatchlistRow(row: Database['public']['Tables']['watchlists']['Row'])
     posterUrl: row.poster_url ?? undefined,
     recommendationReason: row.recommendation_reason ?? null,
     source: row.source as WatchlistItem['source'],
-    createdAt: row.created_at,
+    createdAt: row.created_at ?? row.updated_at,
     updatedAt: row.updated_at,
   };
 }
