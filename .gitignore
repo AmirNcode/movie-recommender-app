@@ -9,3 +9,4 @@ coverage/
 .bruin.yml
 agent/
 plan/
+tsconfig.tsbuildinfo
