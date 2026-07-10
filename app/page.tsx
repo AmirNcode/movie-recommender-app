@@ -220,6 +220,7 @@ export default function Filmmoo() {
 
   useEffect(() => {
     exhaustedDeckRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state updates happen after an await inside these async functions, not synchronously in the effect body
     void fetchMoreMovies();
     void refreshLibraryData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -268,12 +269,14 @@ export default function Filmmoo() {
 
   useEffect(() => {
     if (activeView === 'recommendation' && recommendation) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state updates happen after an await inside syncWatchlistStateForMovie, not synchronously in the effect body
       void syncWatchlistStateForMovie(recommendation.tmdbId);
     }
   }, [activeView, recommendation, syncWatchlistStateForMovie]);
 
   useEffect(() => {
     if (selectedDetail) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state updates happen after an await inside syncWatchlistStateForMovie, not synchronously in the effect body
       void syncWatchlistStateForMovie(selectedDetail.movie.tmdbId);
     }
   }, [selectedDetail, syncWatchlistStateForMovie]);
