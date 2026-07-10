@@ -1,6 +1,7 @@
 'use server';
 
 import { headers } from 'next/headers';
+import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/lib/logger';
@@ -211,21 +212,38 @@ async function hydrateMovie(apiKey: string, tmdbId: number, tier: SourceTier): P
   };
 }
 
+/** Hydrates TMDB details in bounded-concurrency slices to avoid a request storm. */
+async function hydrateMoviesInChunks(
+  apiKey: string,
+  items: Array<{ tmdbId: number; tier: SourceTier }>,
+  chunkSize = 8
+): Promise<CachedMovie[]> {
+  const hydrated: CachedMovie[] = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const slice = items.slice(i, i + chunkSize);
+    const results = await Promise.all(
+      slice.map((item) => hydrateMovie(apiKey, item.tmdbId, item.tier))
+    );
+    for (const movie of results) {
+      if (movie) hydrated.push(movie);
+    }
+  }
+  return hydrated;
+}
+
 async function fillQueueForUser(userId: string, minimumToAdd: number): Promise<void> {
   const admin = createAdminClient();
   const apiKey = process.env.TMDB_API_KEY;
   if (!admin || !apiKey || minimumToAdd <= 0) return;
 
   const excluded = await getExcludedMovieIds(userId);
-  const discovered = await discoverCandidateIds(apiKey, excluded, minimumToAdd * 3);
+  const discovered = await discoverCandidateIds(apiKey, excluded, Math.ceil(minimumToAdd * 1.5));
   if (discovered.length === 0) return;
 
   const cachedMap = await getCachedMoviesByIds(discovered.map((item) => item.tmdbId));
   const missing = discovered.filter((item) => !cachedMap.has(item.tmdbId));
 
-  const hydrated = (
-    await Promise.all(missing.map((item) => hydrateMovie(apiKey, item.tmdbId, item.tier)))
-  ).filter(Boolean) as CachedMovie[];
+  const hydrated = await hydrateMoviesInChunks(apiKey, missing);
 
   if (hydrated.length > 0) {
     await upsertMoviesCache(hydrated);
@@ -254,6 +272,18 @@ async function fillQueueForUser(userId: string, minimumToAdd: number): Promise<v
   }
 }
 
+function toMovieCandidate(movie: QueuedMovie): MovieCandidate {
+  return {
+    tmdbId: movie.tmdbId,
+    title: movie.title,
+    year: movie.year,
+    director: movie.director,
+    genre: movie.genre,
+    synopsis: movie.synopsis,
+    posterUrl: movie.posterUrl,
+  };
+}
+
 export async function getQueuedMovies(
   limit = getQueueConfig().deliverBatchSize
 ): Promise<ActionResult<MovieCandidate[]>> {
@@ -266,30 +296,24 @@ export async function getQueuedMovies(
     const userId = auth.userId;
     const queueConfig = getQueueConfig();
     const queueState = await getQueueState(userId);
-
-    if (queueState.activeCount < queueConfig.lowWatermark) {
-      await fillQueueForUser(userId, queueConfig.targetSize - queueState.activeCount);
-    }
-
     const queued = await getActiveQueueForUser(userId, limit);
-    if (queued.length === 0) {
-      await fillQueueForUser(userId, queueConfig.targetSize);
+
+    if (queued.length > 0) {
+      // Serve immediately; top up below-watermark queues after the response so
+      // the TMDB fan-out never blocks a user-facing request.
+      if (queueState.activeCount < queueConfig.lowWatermark) {
+        after(() => fillQueueForUser(userId, queueConfig.targetSize - queueState.activeCount));
+      }
+      return { ok: true, data: queued.map(toMovieCandidate) };
     }
 
-    const finalQueued = queued.length > 0 ? queued : await getActiveQueueForUser(userId, limit);
+    // Empty queue (first load): fetch a small batch synchronously for a fast
+    // first response, then top up to target size in the background.
+    await fillQueueForUser(userId, queueConfig.deliverBatchSize);
+    after(() => fillQueueForUser(userId, queueConfig.targetSize - queueConfig.deliverBatchSize));
 
-    return {
-      ok: true,
-      data: finalQueued.map((movie) => ({
-        tmdbId: movie.tmdbId,
-        title: movie.title,
-        year: movie.year,
-        director: movie.director,
-        genre: movie.genre,
-        synopsis: movie.synopsis,
-        posterUrl: movie.posterUrl,
-      })),
-    };
+    const finalQueued = await getActiveQueueForUser(userId, limit);
+    return { ok: true, data: finalQueued.map(toMovieCandidate) };
   } catch (error) {
     logger.error('GET_QUEUED_MOVIES_FAILED', { error: String(error) });
     return { ok: false, code: 'load_failed', message: 'Failed to load movies. Please try again.' };
@@ -303,22 +327,16 @@ export async function refillQueuedMovies(): Promise<ActionResult<MovieCandidate[
   if (denied) return denied;
 
   try {
+    const userId = auth.userId;
     const queueConfig = getQueueConfig();
-    await fillQueueForUser(auth.userId, queueConfig.targetSize);
-    const queued = await getActiveQueueForUser(auth.userId, queueConfig.deliverBatchSize);
+    // Fill a deliverable batch synchronously, then top up to target in the
+    // background so the "Reload movies" click returns quickly.
+    await fillQueueForUser(userId, queueConfig.deliverBatchSize);
+    after(() => fillQueueForUser(userId, queueConfig.targetSize - queueConfig.deliverBatchSize));
 
-    return {
-      ok: true,
-      data: queued.map((movie) => ({
-        tmdbId: movie.tmdbId,
-        title: movie.title,
-        year: movie.year,
-        director: movie.director,
-        genre: movie.genre,
-        synopsis: movie.synopsis,
-        posterUrl: movie.posterUrl,
-      })),
-    };
+    const queued = await getActiveQueueForUser(userId, queueConfig.deliverBatchSize);
+
+    return { ok: true, data: queued.map(toMovieCandidate) };
   } catch (error) {
     logger.error('REFILL_QUEUED_MOVIES_FAILED', { error: String(error) });
     return { ok: false, code: 'load_failed', message: 'Failed to load movies. Please try again.' };
