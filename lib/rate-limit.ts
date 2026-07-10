@@ -11,6 +11,13 @@ interface RateLimitConfig {
     maxRequests: number;
     /** Window duration in milliseconds. */
     windowMs: number;
+    /**
+     * Behaviour when the rate-limit backend is unreachable.
+     * 'open' (default): allow the request (availability over cost control).
+     * 'closed': deny the request (cost control over availability) — use for
+     * actions that hit a paid third-party API.
+     */
+    failMode?: 'open' | 'closed';
 }
 
 /** Result returned by checkRateLimit. */
@@ -26,7 +33,8 @@ export interface RateLimitResult {
  * Add new actions here as needed.
  */
 const ACTION_LIMITS: Record<string, RateLimitConfig> = {
-    getMovieRecommendation: { maxRequests: 10, windowMs: 60_000 },
+    // Paid Gemini call — fail closed so a DB hiccup can't disable cost control.
+    getMovieRecommendation: { maxRequests: 10, windowMs: 60_000, failMode: 'closed' },
     getQueuedMovies: { maxRequests: 30, windowMs: 60_000 },
     refillQueuedMovies: { maxRequests: 10, windowMs: 60_000 },
     // Fast swiping is legitimate; 2/sec sustained is not.
@@ -64,8 +72,8 @@ export async function checkRateLimit(
     const key = userId ? `user:${userId}:${action}` : `ip:${ip}:${action}`;
     const supabase = createAdminClient();
     if (!supabase) {
-        console.warn('[RateLimit] Missing Supabase environment variables. Bypassing rate limit.');
-        return { allowed: true };
+        logger.error('RATE_LIMIT_BACKEND_DOWN', { action, reason: 'missing_admin_client' });
+        return { allowed: config.failMode !== 'closed' };
     }
 
     // Use string type for intervals in PostgreSQL (e.g., "60000 milliseconds")
@@ -78,10 +86,8 @@ export async function checkRateLimit(
     } as any);
 
     if (error) {
-        console.error('[RateLimit] Supabase RPC error:', error);
-        // Fail-open if the DB is unreachable to prevent breaking the app,
-        // or fail-closed depending on security posture. Fail-open is standard for this.
-        return { allowed: true };
+        logger.error('RATE_LIMIT_BACKEND_DOWN', { action });
+        return { allowed: config.failMode !== 'closed' };
     }
 
     // Parse the JSON result returned by the RPC
