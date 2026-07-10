@@ -88,7 +88,7 @@ export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetai
 }
 
 export async function updateProfileName(formData: FormData): Promise<{ status: 'success' } | { status: 'error'; error: string }> {
-  const name = String(formData.get('name') ?? '').trim();
+  const name = String(formData.get('name') ?? '').trim().slice(0, 100);
   const supabase = await createClient();
   const {
     data: { user },
