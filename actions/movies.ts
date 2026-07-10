@@ -5,18 +5,21 @@
 'use server';
 
 import { GoogleGenAI, Type } from '@google/genai';
-import type { SwipeAction, Recommendation } from '@/types/movie';
+import { headers } from 'next/headers';
+import type { SwipeAction, Recommendation, WatchProvider, WatchProviderCountryData, WatchProviderData } from '@/types/movie';
 import type { MovieDetail } from '@/types/library';
 import type { ActionResult } from '@/types/actions';
+import type { Json } from '@/types/supabase';
 import { isValidRecommendation } from '@/types/movie';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { sanitiseForPrompt } from '@/lib/sanitise';
 import { logger } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { getCachedMoviesByIds } from '@/lib/movie-queue';
 import { validateMovie } from '@/lib/validate-movie';
 import { assertServerEnv } from '@/lib/env';
-import { buildPosterUrl, pickBestTmdbMatch } from '@/lib/tmdb';
+import { buildPosterUrl, fetchWatchProviders, pickBestTmdbMatch } from '@/lib/tmdb';
 import { getClientIp } from '@/lib/request-ip';
 
 // Throws on first server-side import at runtime if required env is missing.
@@ -34,6 +37,57 @@ type TasteProfile = {
   /** Titles to exclude from the recommendation (most-recent 60 seen). */
   seenTitles: string[];
 };
+
+const WATCH_PROVIDER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function parseCountryFromAcceptLanguage(value: string | null): string {
+  const fallback = 'US';
+  if (!value) return fallback;
+
+  for (const part of value.split(',')) {
+    const tag = part.trim().split(';')[0];
+    const region = tag?.split('-')[1];
+    if (region && /^[A-Za-z]{2}$/.test(region)) return region.toUpperCase();
+  }
+
+  return fallback;
+}
+
+function isWatchProvider(value: unknown): value is WatchProvider {
+  if (typeof value !== 'object' || value === null) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.provider_id === 'number' &&
+    typeof item.provider_name === 'string' &&
+    (typeof item.logo_path === 'string' || item.logo_path === null)
+  );
+}
+
+function providerList(value: unknown): WatchProvider[] {
+  return Array.isArray(value) ? value.filter(isWatchProvider) : [];
+}
+
+function countryDataFromResults(results: Json | null, country: string): WatchProviderData | null {
+  if (typeof results !== 'object' || results === null || Array.isArray(results)) return null;
+  const countryEntry = (results as Record<string, unknown>)[country];
+  if (typeof countryEntry !== 'object' || countryEntry === null || Array.isArray(countryEntry)) {
+    return {
+      country,
+      stream: [],
+      rent: [],
+      buy: [],
+    };
+  }
+
+  const data = countryEntry as WatchProviderCountryData;
+  return {
+    country,
+    link: typeof data.link === 'string' ? data.link : undefined,
+    stream: providerList(data.flatrate),
+    rent: providerList(data.rent),
+    buy: providerList(data.buy),
+  };
+}
 
 
 /**
@@ -208,6 +262,96 @@ export async function saveSwipe(
   } catch (error) {
     logger.error('SAVE_SWIPE_FAILED', { error: String(error) });
     return { ok: false, code: 'save_failed', message: 'Failed to save your swipe. Please try again.' };
+  }
+}
+
+export async function getWatchProviders(tmdbId: number): Promise<ActionResult<WatchProviderData | null>> {
+  if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
+    return { ok: false, code: 'validation', message: 'Invalid movie id.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
+  }
+
+  const ip = await getClientIp();
+  const rateCheck = await checkRateLimit(ip, 'getWatchProviders', user.id);
+  if (!rateCheck.allowed) {
+    return {
+      ok: false,
+      code: 'rate_limited',
+      message: `Rate limit exceeded. Please try again in ${rateCheck.retryAfter} seconds.`,
+      retryAfter: rateCheck.retryAfter,
+    };
+  }
+
+  try {
+    const country = parseCountryFromAcceptLanguage((await headers()).get('accept-language'));
+    const admin = createAdminClient();
+    const apiKey = process.env.TMDB_API_KEY;
+
+    if (!admin || !apiKey) {
+      logger.error('WATCH_PROVIDERS_UNCONFIGURED', { hasAdmin: Boolean(admin), hasApiKey: Boolean(apiKey) });
+      return { ok: false, code: 'load_failed', message: 'Failed to load streaming providers.' };
+    }
+
+    const { data: cachedRow, error: cacheError } = await admin
+      .from('movies_cache')
+      .select('watch_providers, watch_providers_fetched_at')
+      .eq('tmdb_movie_id', tmdbId)
+      .maybeSingle();
+
+    if (cacheError) {
+      logger.warn('WATCH_PROVIDERS_CACHE_READ_FAILED', { tmdbId, error: cacheError.message });
+    }
+
+    const fetchedAt = cachedRow?.watch_providers_fetched_at
+      ? new Date(cachedRow.watch_providers_fetched_at).getTime()
+      : 0;
+    const isFresh = fetchedAt > 0 && Date.now() - fetchedAt < WATCH_PROVIDER_CACHE_TTL_MS;
+
+    if (cachedRow?.watch_providers && isFresh) {
+      logger.warn('WATCH_PROVIDERS_CACHE_HIT', { tmdbId, country });
+      return { ok: true, data: countryDataFromResults(cachedRow.watch_providers, country) };
+    }
+
+    const fetched = await fetchWatchProviders(apiKey, tmdbId);
+    if (fetched) {
+      const now = new Date().toISOString();
+      const { error: updateError } = await admin
+        .from('movies_cache')
+        .update({
+          watch_providers: fetched,
+          watch_providers_fetched_at: now,
+          updated_at: now,
+        })
+        .eq('tmdb_movie_id', tmdbId);
+
+      if (updateError) {
+        logger.warn('WATCH_PROVIDERS_CACHE_WRITE_FAILED', { tmdbId, error: updateError.message });
+      } else {
+        logger.warn('WATCH_PROVIDERS_FETCHED', { tmdbId, country });
+      }
+
+      return { ok: true, data: countryDataFromResults(fetched, country) };
+    }
+
+    if (cachedRow?.watch_providers) {
+      logger.warn('WATCH_PROVIDERS_FETCH_FAILED_USING_STALE_CACHE', { tmdbId, country });
+      return { ok: true, data: countryDataFromResults(cachedRow.watch_providers, country) };
+    }
+
+    logger.warn('WATCH_PROVIDERS_UNAVAILABLE', { tmdbId, country });
+    return { ok: true, data: null };
+  } catch (error) {
+    logger.error('WATCH_PROVIDERS_FAILED', { tmdbId, error: String(error) });
+    return { ok: false, code: 'load_failed', message: 'Failed to load streaming providers.' };
   }
 }
 

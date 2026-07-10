@@ -1,4 +1,5 @@
 import type { Recommendation } from '@/types/movie';
+import type { Json } from '@/types/supabase';
 
 type TmdbSearchResult = {
   id?: number;
@@ -80,4 +81,17 @@ export function pickBestTmdbMatch(
 
 export function buildPosterUrl(posterPath: string | null | undefined): string | undefined {
   return posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : undefined;
+}
+
+export async function fetchWatchProviders(apiKey: string, tmdbId: number): Promise<Json | null> {
+  if (!Number.isInteger(tmdbId) || tmdbId <= 0) return null;
+
+  const url = new URL(`https://api.themoviedb.org/3/movie/${tmdbId}/watch/providers`);
+  url.searchParams.set('api_key', apiKey);
+
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  return (data?.results ?? null) as Json | null;
 }

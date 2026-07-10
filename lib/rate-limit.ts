@@ -62,6 +62,7 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     // Fast swiping is legitimate; 2/sec sustained is not.
     saveSwipe: { maxRequests: 120, windowMs: 60_000 },
     setWatchlistItem: { maxRequests: 30, windowMs: 60_000 },
+    getWatchProviders: { maxRequests: 30, windowMs: 60_000 },
 };
 
 import { createAdminClient } from '@/lib/supabase/admin';

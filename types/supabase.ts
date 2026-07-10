@@ -31,6 +31,8 @@ export type Database = {
           updated_at: string
           vote_average: number | null
           vote_count: number | null
+          watch_providers: Json | null
+          watch_providers_fetched_at: string | null
           year: number | null
         }
         Insert: {
@@ -49,6 +51,8 @@ export type Database = {
           updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
+          watch_providers?: Json | null
+          watch_providers_fetched_at?: string | null
           year?: number | null
         }
         Update: {
@@ -67,6 +71,8 @@ export type Database = {
           updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
+          watch_providers?: Json | null
+          watch_providers_fetched_at?: string | null
           year?: number | null
         }
         Relationships: []

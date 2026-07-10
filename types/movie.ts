@@ -52,6 +52,30 @@ export type Recommendation = {
     source?: 'recommendation';
 };
 
+/** A single TMDB/JustWatch watch-provider entry. */
+export type WatchProvider = {
+    provider_id: number;
+    provider_name: string;
+    logo_path: string | null;
+};
+
+/** Viewer-facing provider groups for one country/region. */
+export type WatchProviderCountryData = {
+    link?: string;
+    flatrate?: WatchProvider[];
+    rent?: WatchProvider[];
+    buy?: WatchProvider[];
+};
+
+/** Normalized watch-provider action payload for the client UI. */
+export type WatchProviderData = {
+    country: string;
+    link?: string;
+    stream: WatchProvider[];
+    rent: WatchProvider[];
+    buy: WatchProvider[];
+};
+
 // ─── Validation ─────────────────────────────────────────────────────────────
 
 /**
