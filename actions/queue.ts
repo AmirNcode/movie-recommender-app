@@ -165,7 +165,7 @@ async function discoverCandidateIds(apiKey: string, excluded: Set<number>, targe
   return collected;
 }
 
-async function hydrateMovie(apiKey: string, tmdbId: number, tier: SourceTier): Promise<CachedMovie | null> {
+export async function hydrateMovie(apiKey: string, tmdbId: number, tier: SourceTier): Promise<CachedMovie | null> {
   const res = await fetch(
     buildUrl(`/movie/${tmdbId}`, {
       api_key: apiKey,

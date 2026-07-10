@@ -8,16 +8,30 @@ test('login, swipe, watchlist, logout', async ({ page }) => {
   }
 
   await page.goto('/login');
+  await page.waitForLoadState('networkidle');
   await page.getByPlaceholder('you@example.com').fill(email);
   await page.getByPlaceholder('••••••••').fill(password);
+  await page.waitForTimeout(500);
   await page.getByRole('button', { name: 'Log In' }).click();
+
+  await expect(page).toHaveURL(/\/$/, { timeout: 15_000 });
+  await page.goto('/onboarding');
+  await expect(page).toHaveURL(/\/onboarding$/, { timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'Rate a few familiar movies' })).toBeVisible();
+
+  const onboardingCards = page.locator('section button');
+  await expect(onboardingCards.first()).toBeVisible({ timeout: 15_000 });
+  for (let i = 0; i < 5; i += 1) {
+    await onboardingCards.nth(i).click();
+  }
+  await page.getByRole('button', { name: 'Done' }).click();
 
   // Deck renders at least one card.
   await expect(page.locator('h2').first()).toBeVisible({ timeout: 15_000 });
 
   // Button-swipe 3 cards.
   for (const label of ['Loved', 'Watched', 'Unwatched'] as const) {
-    await page.getByRole('button', { name: label }).click();
+    await page.getByRole('button', { name: label, exact: true }).click();
     await page.waitForTimeout(500); // let the swipe animation settle
   }
 

@@ -30,5 +30,27 @@ export async function GET(request: Request) {
     return NextResponse.redirect(errorUrl)
   }
 
+  if (next === '/' || next === '/onboarding') {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (user) {
+      const { count } = await supabase
+        .from('swipe_states')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .limit(1)
+
+      if (!count) {
+        return NextResponse.redirect(new URL('/onboarding', requestUrl.origin))
+      }
+    }
+
+    if (next === '/onboarding') {
+      return NextResponse.redirect(new URL('/', requestUrl.origin))
+    }
+  }
+
   return NextResponse.redirect(new URL(next, requestUrl.origin))
 }

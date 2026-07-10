@@ -5,7 +5,7 @@ import type { Database } from '@/types/supabase'
 const AUTH_ROUTES = new Set(['/login', '/signup'])
 
 function isProtectedPath(pathname: string): boolean {
-  return pathname === '/'
+  return pathname === '/' || pathname === '/onboarding'
 }
 
 function isSafeRedirectPath(value: string | null): string {

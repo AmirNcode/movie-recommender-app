@@ -59,6 +59,7 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     getMovieRecommendation: { maxRequests: 10, windowMs: 60_000, failMode: 'closed' },
     getQueuedMovies: { maxRequests: 30, windowMs: 60_000 },
     refillQueuedMovies: { maxRequests: 10, windowMs: 60_000 },
+    getOnboardingMovies: { maxRequests: 10, windowMs: 60_000 },
     // Fast swiping is legitimate; 2/sec sustained is not.
     saveSwipe: { maxRequests: 120, windowMs: 60_000 },
     setWatchlistItem: { maxRequests: 30, windowMs: 60_000 },
