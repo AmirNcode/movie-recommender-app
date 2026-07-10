@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { updateEmail, updatePassword, updateProfileName } from '@/actions/library';
-import { logout } from '@/actions/auth';
+import { deleteAccount, logout } from '@/actions/auth';
 import type { ProfileDetails } from '@/types/library';
 
 export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
@@ -12,6 +12,20 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeleting, startDeleteTransition] = useTransition();
+
+  const handleDelete = () => {
+    setMessage(null);
+    setError(null);
+    startDeleteTransition(async () => {
+      // On success the action clears the session and redirects to /signup, so
+      // control only returns here on failure.
+      const result = await deleteAccount(deleteConfirmText);
+      if (result.status === 'error') setError(result.error);
+    });
+  };
 
   const runAction = (fn: () => Promise<{ status: 'success'; message?: string } | { status: 'error'; error: string }>) => {
     setMessage(null);
@@ -88,6 +102,56 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
       <form action={logout}>
         <button className="w-full h-11 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-200 font-semibold">Log out</button>
       </form>
+
+      <div className="pt-4 border-t border-red-500/20 space-y-3">
+        <div className="text-xs uppercase tracking-widest text-red-400/70">Danger zone</div>
+        {!confirmingDelete ? (
+          <button
+            onClick={() => {
+              setConfirmingDelete(true);
+              setMessage(null);
+              setError(null);
+            }}
+            className="w-full h-11 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-200 font-semibold"
+          >
+            Delete account
+          </button>
+        ) : (
+          <div className="space-y-3 p-4 rounded-2xl border border-red-500/30 bg-red-500/[0.06]">
+            <p className="text-xs leading-relaxed text-red-200/80">
+              This permanently deletes your account and all of your data — swipes, watchlist, and history. This
+              cannot be undone. Type <span className="font-mono font-bold text-red-100">DELETE</span> to confirm.
+            </p>
+            <input
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="DELETE"
+              aria-label="Type DELETE to confirm account deletion"
+              autoComplete="off"
+              className="w-full h-12 bg-black/40 border border-red-500/30 rounded-2xl px-4 text-white font-mono"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setConfirmingDelete(false);
+                  setDeleteConfirmText('');
+                }}
+                disabled={isDeleting}
+                className="flex-1 h-11 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting || deleteConfirmText !== 'DELETE'}
+                className="flex-1 h-11 rounded-2xl bg-red-500 text-white font-semibold disabled:opacity-40"
+              >
+                {isDeleting ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

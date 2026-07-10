@@ -113,6 +113,39 @@ export type Database = {
         }
         Relationships: []
       }
+      shared_recommendations: {
+        Row: {
+          created_at: string
+          id: string
+          movie_title: string
+          movie_year: number | null
+          poster_url: string | null
+          reason: string | null
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          movie_title: string
+          movie_year?: number | null
+          poster_url?: string | null
+          reason?: string | null
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          movie_title?: string
+          movie_year?: number | null
+          poster_url?: string | null
+          reason?: string | null
+          tmdb_movie_id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       swipe_events: {
         Row: {
           action: Database["public"]["Enums"]["swipe_action"]

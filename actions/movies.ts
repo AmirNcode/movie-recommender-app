@@ -265,6 +265,87 @@ export async function saveSwipe(
   }
 }
 
+/** Client-supplied fields for a shareable recommendation snapshot. */
+type ShareRecommendationInput = {
+  tmdbId: number;
+  title: string;
+  year?: number;
+  posterUrl?: string;
+  reason?: string;
+};
+
+/**
+ * Persists a snapshot of a recommendation and returns its public share path.
+ *
+ * The row is inserted through the user-scoped client so the RLS insert policy
+ * ties it to the authenticated owner; the resulting `/r/<id>` page is publicly
+ * readable (see the S2 migration for the public-SELECT rationale). All text is
+ * validated/truncated and the poster is dropped unless it is a TMDB image URL,
+ * reusing the F6 {@link validateMovie} guard.
+ */
+export async function shareRecommendation(
+  rec: ShareRecommendationInput
+): Promise<ActionResult<{ url: string }>> {
+  const validated = validateMovie({
+    tmdbId: rec.tmdbId,
+    title: rec.title ?? '',
+    year: typeof rec.year === 'number' ? rec.year : 0,
+    director: '',
+    genre: '',
+    synopsis: '',
+    recommendationReason: rec.reason ?? null,
+    posterUrl: rec.posterUrl,
+  });
+  if (!validated.ok) return validated;
+  const clean = validated.movie;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, code: 'unauthorized', message: 'Please sign in to continue.' };
+  }
+
+  const ip = await getClientIp();
+  const rateCheck = await checkRateLimit(ip, 'shareRecommendation', user.id);
+  if (!rateCheck.allowed) {
+    return {
+      ok: false,
+      code: 'rate_limited',
+      message: `Rate limit exceeded. Please try again in ${rateCheck.retryAfter} seconds.`,
+      retryAfter: rateCheck.retryAfter,
+    };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('shared_recommendations')
+      .insert({
+        user_id: user.id,
+        tmdb_movie_id: clean.tmdbId,
+        movie_title: clean.title || 'Untitled',
+        movie_year: clean.year || null,
+        poster_url: clean.posterUrl ?? null,
+        reason: clean.recommendationReason ?? null,
+      })
+      .select('id')
+      .single();
+
+    if (error || !data) {
+      logger.warn('SHARE_REC_INSERT_FAILED', { error: error?.message });
+      return { ok: false, code: 'save_failed', message: 'Could not create a share link. Please try again.' };
+    }
+
+    return { ok: true, data: { url: `/r/${data.id}` } };
+  } catch (error) {
+    logger.error('SHARE_REC_FAILED', { error: String(error) });
+    return { ok: false, code: 'save_failed', message: 'Could not create a share link. Please try again.' };
+  }
+}
+
 export async function getWatchProviders(tmdbId: number): Promise<ActionResult<WatchProviderData | null>> {
   if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
     return { ok: false, code: 'validation', message: 'Invalid movie id.' };

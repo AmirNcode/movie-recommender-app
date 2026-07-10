@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Eye, Film, Heart, Loader2, Plus, ThumbsDown } from 'lucide-react';
-import { getWatchProviders } from '@/actions/movies';
+import { Check, Eye, Film, Heart, Loader2, Plus, Share2, ThumbsDown } from 'lucide-react';
+import { getWatchProviders, shareRecommendation } from '@/actions/movies';
 import type { MovieDetail } from '@/types/library';
 import type { SwipeAction, WatchProvider, WatchProviderData } from '@/types/movie';
 
@@ -125,7 +125,60 @@ export function MovieDetailCard({
   const [providers, setProviders] = useState<WatchProviderData | null>(null);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
   const tmdbId = movie.tmdbId;
+  const canShare = Boolean(movie.recommendationReason) && Boolean(tmdbId) && tmdbId > 0;
+
+  async function handleShare() {
+    if (isSharing) return;
+    setIsSharing(true);
+    setShareMessage(null);
+
+    const copyToClipboard = async (url: string) => {
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareMessage('Link copied to clipboard');
+      } catch {
+        setShareMessage('Could not copy the link.');
+      }
+    };
+
+    try {
+      const result = await shareRecommendation({
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        year: movie.year,
+        posterUrl: movie.posterUrl,
+        reason: movie.recommendationReason ?? undefined,
+      });
+
+      if (!result.ok) {
+        setShareMessage(result.message);
+        return;
+      }
+
+      const url = `${window.location.origin}${result.data.url}`;
+
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share({ title: `Watch ${movie.title}`, url });
+          setShareMessage('Shared!');
+        } catch (err) {
+          // A cancelled share sheet isn't an error; anything else → clipboard.
+          if ((err as { name?: string })?.name !== 'AbortError') {
+            await copyToClipboard(url);
+          }
+        }
+      } else {
+        await copyToClipboard(url);
+      }
+    } catch {
+      setShareMessage('Could not create a share link.');
+    } finally {
+      setIsSharing(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +259,30 @@ export function MovieDetailCard({
               {isInWatchlist ? <Check size={24} className="text-green-400" /> : <Plus size={24} />}
             </button>
           ) : null}
+
+          {canShare ? (
+            <button
+              onClick={() => void handleShare()}
+              disabled={isSharing}
+              aria-label="Share this recommendation"
+              className="absolute top-4 left-4 z-50 w-12 h-12 rounded-full bg-black/40 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/60 transition-colors border border-white/20 shadow-lg disabled:opacity-60"
+            >
+              {isSharing ? <Loader2 size={22} className="animate-spin" /> : <Share2 size={22} />}
+            </button>
+          ) : null}
+
+          <AnimatePresence>
+            {shareMessage && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: -4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center z-50 px-4 py-2 bg-black/80 backdrop-blur-md text-white text-xs font-mono rounded-full border border-white/10 shadow-xl whitespace-nowrap max-w-[90%]"
+              >
+                {shareMessage}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <AnimatePresence>
             {watchlistMessage && (
