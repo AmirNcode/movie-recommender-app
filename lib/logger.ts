@@ -7,6 +7,8 @@
  * or failure details that could aid an attacker.
  */
 
+import * as Sentry from '@sentry/nextjs';
+
 const isDev = process.env.NODE_ENV !== 'production';
 
 /**
@@ -53,9 +55,9 @@ function error(code: string, details?: LogDetails): void {
         // Development: full details for debugging
         console.error(`[ERROR] ${code}`, details ?? '');
     } else {
-        console.error(
-            JSON.stringify({ level: 'error', code, ...sanitiseDetails(details) })
-        );
+        const safeDetails = sanitiseDetails(details);
+        console.error(JSON.stringify({ level: 'error', code, ...safeDetails }));
+        Sentry.captureMessage(code, { level: 'error', extra: safeDetails });
     }
 }
 
@@ -69,9 +71,9 @@ function warn(code: string, details?: LogDetails): void {
     if (isDev) {
         console.warn(`[WARN] ${code}`, details ?? '');
     } else {
-        console.warn(
-            JSON.stringify({ level: 'warn', code, ...sanitiseDetails(details) })
-        );
+        const safeDetails = sanitiseDetails(details);
+        console.warn(JSON.stringify({ level: 'warn', code, ...safeDetails }));
+        Sentry.captureMessage(code, { level: 'warning', extra: safeDetails });
     }
 }
 
