@@ -309,10 +309,12 @@ export default function Filmmoo() {
     setSwipedMovies((prev) => prev.slice(0, -1));
   }, [currentIndex]);
 
-  const requestRecommendation = useCallback(async (payloadOverride?: SwipedMovie[]) => {
-    const payload = payloadOverride ?? swipedMovies;
-
-    if (payload.length > 0 && !payload.some((movie) => movie.action !== 'unwatched')) {
+  const requestRecommendation = useCallback(async () => {
+    // Local pre-check is only a UX shortcut; the authoritative taste profile is
+    // built server-side from persisted swipe state. Allow the request when the
+    // user has rated something this session OR has persisted history.
+    const hasRatedThisSession = swipedMovies.some((movie) => movie.action !== 'unwatched');
+    if (!hasRatedThisSession && historyItems.length === 0) {
       showError('Please rate at least one movie (Watched, Loved, or Disliked) to get a recommendation.');
       return;
     }
@@ -329,7 +331,7 @@ export default function Filmmoo() {
     }, 2000);
 
     try {
-      const result = await getMovieRecommendation(payload);
+      const result = await getMovieRecommendation();
       if (!result.ok) {
         reportFailure(result);
       } else if (result.data) {
@@ -344,7 +346,7 @@ export default function Filmmoo() {
       clearInterval(interval);
       setIsRecommending(false);
     }
-  }, [reportFailure, showError, swipedMovies]);
+  }, [historyItems, reportFailure, showError, swipedMovies]);
 
   const handleRecommendationRating = useCallback(async (action: Exclude<SwipeAction, 'unwatched'>) => {
     if (!recommendation) return;
@@ -353,8 +355,7 @@ export default function Filmmoo() {
     persistSwipe(detail, action);
 
     const movie = detailToMovie(detail);
-    const nextSwiped = [...swipedMovies, { ...movie, action }];
-    setSwipedMovies(nextSwiped);
+    setSwipedMovies((prev) => [...prev, { ...movie, action }]);
     setRecommendation(null);
     setIsInWatchlist(false);
     setWatchlistMessage(null);
@@ -365,8 +366,8 @@ export default function Filmmoo() {
     } catch {
       // Non-blocking refresh; recommendation flow should still continue.
     }
-    await requestRecommendation(nextSwiped);
-  }, [persistSwipe, recommendation, refreshHistory, refreshWatchlist, requestRecommendation, swipedMovies]);
+    await requestRecommendation();
+  }, [persistSwipe, recommendation, refreshHistory, refreshWatchlist, requestRecommendation]);
 
   const toggleWatchlistForMovie = useCallback(async (movie: MovieDetail) => {
     if (!movie.tmdbId || movie.tmdbId <= 0) {

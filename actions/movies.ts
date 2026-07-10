@@ -6,7 +6,7 @@
 
 import { GoogleGenAI, Type } from '@google/genai';
 import { headers } from 'next/headers';
-import type { SwipeAction, SwipedMovie, Recommendation } from '@/types/movie';
+import type { SwipeAction, Recommendation } from '@/types/movie';
 import type { MovieDetail } from '@/types/library';
 import type { ActionResult } from '@/types/actions';
 import { isValidRecommendation } from '@/types/movie';
@@ -14,7 +14,21 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { sanitiseForPrompt } from '@/lib/sanitise';
 import { logger } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
+import { getCachedMoviesByIds } from '@/lib/movie-queue';
 import { buildPosterUrl, pickBestTmdbMatch } from '@/lib/tmdb';
+
+/** Minimal movie metadata used to describe the user's taste to the model. */
+type TasteEntry = { title: string; year: number; director: string; genre: string };
+
+/** Server-built taste profile, partitioned by the user's latest action. */
+type TasteProfile = {
+  loved: TasteEntry[];
+  watched: TasteEntry[];
+  disliked: TasteEntry[];
+  unwatched: TasteEntry[];
+  /** Titles to exclude from the recommendation (most-recent 60 seen). */
+  seenTitles: string[];
+};
 
 /**
  * Reads the client IP from Next.js request headers.
@@ -28,17 +42,116 @@ async function getClientIp(): Promise<string> {
 }
 
 /**
- * Builds a rich metadata string for a swiped movie to give Gemini
- * context beyond just the title (genre, director, year).
+ * Builds a rich metadata string for a taste entry to give Gemini context
+ * beyond just the title (genre, director, year). Every DB-sourced string is
+ * run through sanitiseForPrompt (titles/synopses originated from client/TMDB).
  */
-function movieLabel(m: SwipedMovie): string {
-  const parts = [sanitiseForPrompt(m.title)];
-  if (m.year) parts.push(`(${m.year})`);
-  if (m.director && m.director !== 'Unknown Director') {
-    parts.push(`dir. ${sanitiseForPrompt(m.director)}`);
+function tasteLabel(entry: TasteEntry): string {
+  const parts = [sanitiseForPrompt(entry.title)];
+  if (entry.year) parts.push(`(${entry.year})`);
+  if (entry.director && entry.director !== 'Unknown Director') {
+    parts.push(`dir. ${sanitiseForPrompt(entry.director)}`);
   }
-  if (m.genre) parts.push(`[${sanitiseForPrompt(m.genre)}]`);
+  if (entry.genre) parts.push(`[${sanitiseForPrompt(entry.genre)}]`);
   return parts.join(' ');
+}
+
+/**
+ * Builds the user's taste profile server-side from persisted swipe state,
+ * so recommendations survive a page reload and the client can't inject
+ * arbitrary/unbounded content into the paid Gemini prompt.
+ *
+ * Metadata for each rated movie is hydrated from movies_cache first, then
+ * falls back to the most-recent swipe_events row (covers recommendation-
+ * sourced swipes that never entered the discovery cache). Reads use the
+ * user-scoped client so RLS restricts rows to the caller.
+ */
+async function buildTasteProfile(userId: string): Promise<TasteProfile> {
+  const supabase = await createClient();
+
+  const { data: states } = await supabase
+    .from('swipe_states')
+    .select('tmdb_movie_id, latest_action, updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(300);
+
+  const stateRows = states ?? [];
+  const ids = stateRows.map((s) => s.tmdb_movie_id);
+
+  const metadata = new Map<number, TasteEntry>();
+
+  if (ids.length > 0) {
+    const cachedMap = await getCachedMoviesByIds(ids);
+    for (const id of ids) {
+      const cached = cachedMap.get(id);
+      if (cached) {
+        metadata.set(id, {
+          title: cached.title,
+          year: cached.year,
+          director: cached.director,
+          genre: cached.genre,
+        });
+      }
+    }
+
+    const missingIds = ids.filter((id) => !metadata.has(id));
+    if (missingIds.length > 0) {
+      const { data: events } = await supabase
+        .from('swipe_events')
+        .select('tmdb_movie_id, movie_title, movie_year, movie_director, movie_genre, created_at')
+        .eq('user_id', userId)
+        .in('tmdb_movie_id', missingIds)
+        .order('created_at', { ascending: false });
+
+      for (const row of events ?? []) {
+        // Rows are newest-first; keep only the most recent per movie.
+        if (metadata.has(row.tmdb_movie_id) || !row.movie_title) continue;
+        metadata.set(row.tmdb_movie_id, {
+          title: row.movie_title,
+          year: row.movie_year ?? 0,
+          director: row.movie_director ?? 'Unknown Director',
+          genre: row.movie_genre ?? 'Unknown Genre',
+        });
+      }
+    }
+  }
+
+  const loved: TasteEntry[] = [];
+  const watched: TasteEntry[] = [];
+  const disliked: TasteEntry[] = [];
+  const unwatched: TasteEntry[] = [];
+  const seenTitles: string[] = [];
+
+  // stateRows are ordered newest-first, so the partitions and seenTitles
+  // are naturally most-recent-first before capping.
+  for (const state of stateRows) {
+    const entry = metadata.get(state.tmdb_movie_id);
+    if (!entry) continue;
+    seenTitles.push(sanitiseForPrompt(entry.title));
+    switch (state.latest_action) {
+      case 'loved':
+        loved.push(entry);
+        break;
+      case 'watched':
+        watched.push(entry);
+        break;
+      case 'disliked':
+        disliked.push(entry);
+        break;
+      case 'unwatched':
+        unwatched.push(entry);
+        break;
+    }
+  }
+
+  return {
+    loved: loved.slice(0, 60),
+    watched: watched.slice(0, 60),
+    disliked: disliked.slice(0, 60),
+    unwatched: unwatched.slice(0, 60),
+    seenTitles: seenTitles.slice(0, 60),
+  };
 }
 
 /**
@@ -89,10 +202,11 @@ export async function saveSwipe(
 
 /**
  * Generates a personalized movie recommendation using Gemini.
+ *
+ * The taste profile is built server-side from persisted swipe state, so it
+ * survives page reloads and cannot be spoofed by the client.
  */
-export async function getMovieRecommendation(
-  swipedMovies: SwipedMovie[]
-): Promise<ActionResult<Recommendation | null>> {
+export async function getMovieRecommendation(): Promise<ActionResult<Recommendation | null>> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -115,12 +229,12 @@ export async function getMovieRecommendation(
   }
 
   try {
-    const loved = swipedMovies.filter((m) => m.action === 'loved');
-    const watched = swipedMovies.filter((m) => m.action === 'watched');
-    const disliked = swipedMovies.filter((m) => m.action === 'disliked');
-    const unwatched = swipedMovies.filter((m) => m.action === 'unwatched');
+    const { loved, watched, disliked, unwatched, seenTitles } = await buildTasteProfile(user.id);
 
-    const allSeenTitles = swipedMovies.map((m) => sanitiseForPrompt(m.title));
+    if (loved.length + watched.length + disliked.length === 0) {
+      return { ok: false, code: 'no_taste_profile', message: 'Rate at least one movie first.' };
+    }
+
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const prompt = `
@@ -130,23 +244,23 @@ below, then recommend ONE film they are very likely to love.
 ## User taste profile
 
 LOVED (highly rated by user):
-${loved.length ? loved.map(movieLabel).join('\n') : 'None yet'}
+${loved.length ? loved.map(tasteLabel).join('\n') : 'None yet'}
 
 WATCHED AND LIKED (neutral positive):
-${watched.length ? watched.map(movieLabel).join('\n') : 'None yet'}
+${watched.length ? watched.map(tasteLabel).join('\n') : 'None yet'}
 
 DISLIKED:
-${disliked.length ? disliked.map(movieLabel).join('\n') : 'None yet'}
+${disliked.length ? disliked.map(tasteLabel).join('\n') : 'None yet'}
 
 HAVEN'T WATCHED (swiped past):
-${unwatched.length ? unwatched.map(movieLabel).join('\n') : 'None yet'}
+${unwatched.length ? unwatched.map(tasteLabel).join('\n') : 'None yet'}
 
 ## Instructions
 
 1. First, silently identify 2-3 patterns in the loved list (genres, directors,
    themes, tone, era). Use these patterns to drive your pick.
 2. Recommend ONE film that is NOT in any of the lists above. Do not recommend:
-   ${allSeenTitles.slice(-60).join(', ')}
+   ${seenTitles.join(', ')}
 3. Avoid defaulting to the single most famous film in a genre.
 4. The "reason" field should explain specifically *why* this matches their
    taste (reference their loved films by name).
