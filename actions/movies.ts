@@ -15,6 +15,7 @@ import { sanitiseForPrompt } from '@/lib/sanitise';
 import { logger } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { getCachedMoviesByIds } from '@/lib/movie-queue';
+import { validateMovie } from '@/lib/validate-movie';
 import { buildPosterUrl, pickBestTmdbMatch } from '@/lib/tmdb';
 
 /** Minimal movie metadata used to describe the user's taste to the model. */
@@ -165,6 +166,11 @@ export async function saveSwipe(
   // Invalid id: silently succeed as a no-op (preserves prior fire-and-forget behaviour).
   if (!movie.tmdbId || movie.tmdbId <= 0) return { ok: true, data: null };
 
+  // Normalise/cap the client-supplied payload before it hits the DB.
+  const validated = validateMovie(movie);
+  if (!validated.ok) return validated;
+  const clean = validated.movie;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -176,16 +182,16 @@ export async function saveSwipe(
 
   try {
     const { error } = await supabase.rpc('record_swipe_event', {
-      p_tmdb_movie_id: movie.tmdbId,
+      p_tmdb_movie_id: clean.tmdbId,
       p_action: action,
-      p_movie_title: movie.title || undefined,
-      p_movie_year: movie.year || undefined,
-      p_movie_director: movie.director || undefined,
-      p_movie_genre: movie.genre || undefined,
-      p_poster_url: movie.posterUrl || undefined,
-      p_movie_synopsis: movie.synopsis || undefined,
-      p_recommendation_reason: movie.recommendationReason || undefined,
-      p_source: movie.source || undefined,
+      p_movie_title: clean.title || undefined,
+      p_movie_year: clean.year || undefined,
+      p_movie_director: clean.director || undefined,
+      p_movie_genre: clean.genre || undefined,
+      p_poster_url: clean.posterUrl || undefined,
+      p_movie_synopsis: clean.synopsis || undefined,
+      p_recommendation_reason: clean.recommendationReason || undefined,
+      p_source: clean.source || undefined,
     });
 
     if (error) {

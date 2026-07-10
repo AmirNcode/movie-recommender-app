@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import type { MovieDetail, WatchlistItem } from '@/types/library';
 import type { ActionResult } from '@/types/actions';
 import type { Database } from '@/types/supabase';
+import { validateMovie } from '@/lib/validate-movie';
 import { logger } from '@/lib/logger';
 
 function mapWatchlistRow(row: Database['public']['Tables']['watchlists']['Row']): WatchlistItem {
@@ -44,6 +45,11 @@ export async function setWatchlistItem(
   if (!movie.tmdbId || movie.tmdbId <= 0) {
     return { ok: false, code: 'validation', message: 'Could not save this movie because TMDB metadata is missing.' };
   }
+
+  // Normalise/cap the client-supplied payload before it hits the DB.
+  const validated = validateMovie(movie);
+  if (!validated.ok) return validated;
+  movie = validated.movie;
 
   try {
     if (shouldBeInWatchlist) {
