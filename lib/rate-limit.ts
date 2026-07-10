@@ -29,6 +29,28 @@ export interface RateLimitResult {
 }
 
 /**
+ * Parses the raw `check_rate_limit` RPC response into a {@link RateLimitResult}.
+ *
+ * The RPC's return type is untyped Json; the function body always returns a
+ * JSON object, but the Supabase client may hand it back as a string in some
+ * code paths, so both shapes are handled defensively. Falls back to the
+ * configured window when the backend omits `retryAfter` on a denial.
+ */
+export function parseRateLimitResult(data: unknown, windowMs: number): RateLimitResult {
+    const parsed: { allowed: boolean; retryAfter?: number } | null =
+        typeof data === 'string' ? JSON.parse(data) : (data as { allowed: boolean; retryAfter?: number } | null);
+
+    if (parsed && parsed.allowed === false) {
+        return {
+            allowed: false,
+            retryAfter: parsed.retryAfter || Math.ceil(windowMs / 1000),
+        };
+    }
+
+    return { allowed: true };
+}
+
+/**
  * Rate limit configurations per action name.
  * Add new actions here as needed.
  */
@@ -90,17 +112,5 @@ export async function checkRateLimit(
         return { allowed: config.failMode !== 'closed' };
     }
 
-    // The RPC's return type is untyped Json; the function body always
-    // returns a JSON object, but parse the string case defensively.
-    const parsed: { allowed: boolean; retryAfter?: number } | null =
-        typeof data === 'string' ? JSON.parse(data) : (data as { allowed: boolean; retryAfter?: number } | null);
-
-    if (parsed && parsed.allowed === false) {
-        return {
-            allowed: false,
-            retryAfter: parsed.retryAfter || Math.ceil(config.windowMs / 1000),
-        };
-    }
-
-    return { allowed: true };
+    return parseRateLimitResult(data, config.windowMs);
 }
