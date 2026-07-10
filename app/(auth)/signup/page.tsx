@@ -123,9 +123,10 @@ export default function SignupPage() {
                 
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-gray-300 ml-1">Name (optional)</label>
-                  <input 
+                  <input
                     name="name"
                     type="text"
+                    maxLength={100}
                     className="w-full h-12 bg-black/40 border border-white/10 rounded-2xl px-4 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                     placeholder="Jane Doe"
                   />
@@ -148,7 +149,7 @@ export default function SignupPage() {
                     name="password"
                     type="password"
                     required
-                    minLength={6}
+                    minLength={8}
                     className="w-full h-12 bg-black/40 border border-white/10 rounded-2xl px-4 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                     placeholder="••••••••"
                   />

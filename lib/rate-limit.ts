@@ -11,6 +11,13 @@ interface RateLimitConfig {
     maxRequests: number;
     /** Window duration in milliseconds. */
     windowMs: number;
+    /**
+     * Behaviour when the rate-limit backend is unreachable.
+     * 'open' (default): allow the request (availability over cost control).
+     * 'closed': deny the request (cost control over availability) — use for
+     * actions that hit a paid third-party API.
+     */
+    failMode?: 'open' | 'closed';
 }
 
 /** Result returned by checkRateLimit. */
@@ -26,12 +33,17 @@ export interface RateLimitResult {
  * Add new actions here as needed.
  */
 const ACTION_LIMITS: Record<string, RateLimitConfig> = {
-    getMovieRecommendation: { maxRequests: 10, windowMs: 60_000 },
+    // Paid Gemini call — fail closed so a DB hiccup can't disable cost control.
+    getMovieRecommendation: { maxRequests: 10, windowMs: 60_000, failMode: 'closed' },
     getQueuedMovies: { maxRequests: 30, windowMs: 60_000 },
     refillQueuedMovies: { maxRequests: 10, windowMs: 60_000 },
+    // Fast swiping is legitimate; 2/sec sustained is not.
+    saveSwipe: { maxRequests: 120, windowMs: 60_000 },
+    setWatchlistItem: { maxRequests: 30, windowMs: 60_000 },
 };
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/lib/logger';
 
 /**
  * Checks whether a request from the given IP for the given action
@@ -49,7 +61,9 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
     const config = ACTION_LIMITS[action];
     if (!config) {
-        // Unknown action — allow by default (fail-open for unconfigured actions)
+        // Unknown action — fail-open, but log loudly so a typo can't silently
+        // disable rate limiting for a real action.
+        logger.error('RATE_LIMIT_UNCONFIGURED_ACTION', { action });
         return { allowed: true };
     }
 
@@ -58,8 +72,8 @@ export async function checkRateLimit(
     const key = userId ? `user:${userId}:${action}` : `ip:${ip}:${action}`;
     const supabase = createAdminClient();
     if (!supabase) {
-        console.warn('[RateLimit] Missing Supabase environment variables. Bypassing rate limit.');
-        return { allowed: true };
+        logger.error('RATE_LIMIT_BACKEND_DOWN', { action, reason: 'missing_admin_client' });
+        return { allowed: config.failMode !== 'closed' };
     }
 
     // Use string type for intervals in PostgreSQL (e.g., "60000 milliseconds")
@@ -69,20 +83,17 @@ export async function checkRateLimit(
         ip_action_key: key,
         max_reqs: config.maxRequests,
         window_interval: intervalStr,
-    } as any);
+    });
 
     if (error) {
-        console.error('[RateLimit] Supabase RPC error:', error);
-        // Fail-open if the DB is unreachable to prevent breaking the app,
-        // or fail-closed depending on security posture. Fail-open is standard for this.
-        return { allowed: true };
+        logger.error('RATE_LIMIT_BACKEND_DOWN', { action });
+        return { allowed: config.failMode !== 'closed' };
     }
 
-    // Parse the JSON result returned by the RPC
-    const result = data as any;
-    
-    // In case string came back instead of parsed json (due to typed RPC mismatches)
-    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+    // The RPC's return type is untyped Json; the function body always
+    // returns a JSON object, but parse the string case defensively.
+    const parsed: { allowed: boolean; retryAfter?: number } | null =
+        typeof data === 'string' ? JSON.parse(data) : (data as { allowed: boolean; retryAfter?: number } | null);
 
     if (parsed && parsed.allowed === false) {
         return {

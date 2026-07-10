@@ -7,303 +7,269 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.4"
+  }
   public: {
     Tables: {
-      profiles: {
-        Row: {
-          id: string
-          name: string | null
-          created_at: string | null
-        }
-        Insert: {
-          id: string
-          name?: string | null
-          created_at?: string | null
-        }
-        Update: {
-          id?: string
-          name?: string | null
-          created_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'profiles_id_fkey'
-            columns: ['id']
-            isOneToOne: true
-            referencedRelation: 'users'
-            referencedColumns: ['id']
-          },
-        ]
-      }
       movies_cache: {
         Row: {
-          tmdb_movie_id: number
-          title: string
-          year: number | null
+          cached_at: string
           director: string | null
           genre: string | null
-          synopsis: string | null
-          poster_url: string | null
-          top_actors: string[]
-          release_date: string | null
+          original_language: string | null
           popularity: number | null
+          poster_url: string | null
+          release_date: string | null
+          source_tier: string | null
+          synopsis: string | null
+          title: string
+          tmdb_movie_id: number
+          top_actors: string[]
+          updated_at: string
           vote_average: number | null
           vote_count: number | null
-          original_language: string | null
-          source_tier: string | null
-          cached_at: string
-          updated_at: string
+          year: number | null
         }
         Insert: {
-          tmdb_movie_id: number
-          title: string
-          year?: number | null
+          cached_at?: string
           director?: string | null
           genre?: string | null
-          synopsis?: string | null
-          poster_url?: string | null
-          top_actors?: string[]
-          release_date?: string | null
+          original_language?: string | null
           popularity?: number | null
+          poster_url?: string | null
+          release_date?: string | null
+          source_tier?: string | null
+          synopsis?: string | null
+          title: string
+          tmdb_movie_id: number
+          top_actors?: string[]
+          updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
-          original_language?: string | null
-          source_tier?: string | null
-          cached_at?: string
-          updated_at?: string
+          year?: number | null
         }
         Update: {
-          tmdb_movie_id?: number
-          title?: string
-          year?: number | null
+          cached_at?: string
           director?: string | null
           genre?: string | null
-          synopsis?: string | null
-          poster_url?: string | null
-          top_actors?: string[]
-          release_date?: string | null
+          original_language?: string | null
           popularity?: number | null
+          poster_url?: string | null
+          release_date?: string | null
+          source_tier?: string | null
+          synopsis?: string | null
+          title?: string
+          tmdb_movie_id?: number
+          top_actors?: string[]
+          updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
-          original_language?: string | null
-          source_tier?: string | null
-          cached_at?: string
-          updated_at?: string
+          year?: number | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id: string
+          name?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string | null
         }
         Relationships: []
       }
       rate_limits: {
         Row: {
-          key: string
           count: number | null
+          key: string
           window_start: string | null
         }
         Insert: {
-          key: string
           count?: number | null
+          key: string
           window_start?: string | null
         }
         Update: {
-          key?: string
           count?: number | null
+          key?: string
           window_start?: string | null
         }
         Relationships: []
       }
       swipe_events: {
         Row: {
+          action: Database["public"]["Enums"]["swipe_action"]
+          created_at: string
           id: string
-          user_id: string
-          tmdb_movie_id: number
-          action: Database['public']['Enums']['swipe_action']
-          movie_title: string | null
-          movie_year: number | null
           movie_director: string | null
           movie_genre: string | null
-          poster_url: string | null
           movie_synopsis: string | null
+          movie_title: string | null
+          movie_year: number | null
+          poster_url: string | null
           recommendation_reason: string | null
           source: string | null
-          created_at: string
+          tmdb_movie_id: number
+          user_id: string
         }
         Insert: {
+          action: Database["public"]["Enums"]["swipe_action"]
+          created_at?: string
           id?: string
-          user_id: string
-          tmdb_movie_id: number
-          action: Database['public']['Enums']['swipe_action']
-          movie_title?: string | null
-          movie_year?: number | null
           movie_director?: string | null
           movie_genre?: string | null
-          poster_url?: string | null
           movie_synopsis?: string | null
+          movie_title?: string | null
+          movie_year?: number | null
+          poster_url?: string | null
           recommendation_reason?: string | null
           source?: string | null
-          created_at?: string
+          tmdb_movie_id: number
+          user_id: string
         }
         Update: {
+          action?: Database["public"]["Enums"]["swipe_action"]
+          created_at?: string
           id?: string
-          user_id?: string
-          tmdb_movie_id?: number
-          action?: Database['public']['Enums']['swipe_action']
-          movie_title?: string | null
-          movie_year?: number | null
           movie_director?: string | null
           movie_genre?: string | null
-          poster_url?: string | null
           movie_synopsis?: string | null
+          movie_title?: string | null
+          movie_year?: number | null
+          poster_url?: string | null
           recommendation_reason?: string | null
           source?: string | null
-          created_at?: string
+          tmdb_movie_id?: number
+          user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: 'swipe_events_user_id_fkey'
-            columns: ['user_id']
-            isOneToOne: false
-            referencedRelation: 'users'
-            referencedColumns: ['id']
-          },
-        ]
+        Relationships: []
       }
       swipe_states: {
         Row: {
           id: string
-          user_id: string
+          latest_action: Database["public"]["Enums"]["swipe_action"]
           tmdb_movie_id: number
-          latest_action: Database['public']['Enums']['swipe_action']
           updated_at: string
+          user_id: string
         }
         Insert: {
           id?: string
-          user_id: string
+          latest_action: Database["public"]["Enums"]["swipe_action"]
           tmdb_movie_id: number
-          latest_action: Database['public']['Enums']['swipe_action']
           updated_at?: string
+          user_id: string
         }
         Update: {
           id?: string
-          user_id?: string
+          latest_action?: Database["public"]["Enums"]["swipe_action"]
           tmdb_movie_id?: number
-          latest_action?: Database['public']['Enums']['swipe_action']
           updated_at?: string
+          user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: 'swipe_states_user_id_fkey'
-            columns: ['user_id']
-            isOneToOne: false
-            referencedRelation: 'users'
-            referencedColumns: ['id']
-          },
-        ]
+        Relationships: []
       }
       user_movie_queue: {
         Row: {
+          consumed_at: string | null
+          created_at: string
+          discarded_at: string | null
           id: string
-          user_id: string
-          tmdb_movie_id: number
           queue_rank: number
           source_tier: string | null
-          created_at: string
-          consumed_at: string | null
-          discarded_at: string | null
+          tmdb_movie_id: number
+          user_id: string
         }
         Insert: {
+          consumed_at?: string | null
+          created_at?: string
+          discarded_at?: string | null
           id?: string
-          user_id: string
-          tmdb_movie_id: number
           queue_rank: number
           source_tier?: string | null
-          created_at?: string
-          consumed_at?: string | null
-          discarded_at?: string | null
+          tmdb_movie_id: number
+          user_id: string
         }
         Update: {
+          consumed_at?: string | null
+          created_at?: string
+          discarded_at?: string | null
           id?: string
-          user_id?: string
-          tmdb_movie_id?: number
           queue_rank?: number
           source_tier?: string | null
-          created_at?: string
-          consumed_at?: string | null
-          discarded_at?: string | null
+          tmdb_movie_id?: number
+          user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: 'user_movie_queue_tmdb_movie_id_fkey'
-            columns: ['tmdb_movie_id']
+            foreignKeyName: "user_movie_queue_tmdb_movie_id_fkey"
+            columns: ["tmdb_movie_id"]
             isOneToOne: false
-            referencedRelation: 'movies_cache'
-            referencedColumns: ['tmdb_movie_id']
-          },
-          {
-            foreignKeyName: 'user_movie_queue_user_id_fkey'
-            columns: ['user_id']
-            isOneToOne: false
-            referencedRelation: 'users'
-            referencedColumns: ['id']
+            referencedRelation: "movies_cache"
+            referencedColumns: ["tmdb_movie_id"]
           },
         ]
       }
       watchlists: {
         Row: {
+          created_at: string | null
           id: string
-          user_id: string
-          tmdb_movie_id: number
-          movie_title: string | null
-          movie_year: number | null
           movie_director: string | null
           movie_genre: string | null
           movie_synopsis: string | null
-          recommendation_reason: string | null
-          source: string | null
-          recommended_at: string | null
+          movie_title: string | null
+          movie_year: number | null
           poster_url: string | null
-          created_at: string
+          recommendation_reason: string | null
+          recommended_at: string | null
+          source: string | null
+          tmdb_movie_id: number
           updated_at: string
+          user_id: string
         }
         Insert: {
+          created_at?: string | null
           id?: string
-          user_id: string
-          tmdb_movie_id: number
-          movie_title?: string | null
-          movie_year?: number | null
           movie_director?: string | null
           movie_genre?: string | null
           movie_synopsis?: string | null
-          recommendation_reason?: string | null
-          source?: string | null
-          recommended_at?: string | null
+          movie_title?: string | null
+          movie_year?: number | null
           poster_url?: string | null
-          created_at?: string
+          recommendation_reason?: string | null
+          recommended_at?: string | null
+          source?: string | null
+          tmdb_movie_id: number
           updated_at?: string
+          user_id: string
         }
         Update: {
+          created_at?: string | null
           id?: string
-          user_id?: string
-          tmdb_movie_id?: number
-          movie_title?: string | null
-          movie_year?: number | null
           movie_director?: string | null
           movie_genre?: string | null
           movie_synopsis?: string | null
-          recommendation_reason?: string | null
-          source?: string | null
-          recommended_at?: string | null
+          movie_title?: string | null
+          movie_year?: number | null
           poster_url?: string | null
-          created_at?: string
+          recommendation_reason?: string | null
+          recommended_at?: string | null
+          source?: string | null
+          tmdb_movie_id?: number
           updated_at?: string
+          user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: 'watchlists_user_id_fkey'
-            columns: ['user_id']
-            isOneToOne: false
-            referencedRelation: 'users'
-            referencedColumns: ['id']
-          },
-        ]
+        Relationships: []
       }
     }
     Views: {
@@ -319,33 +285,155 @@ export type Database = {
         Returns: Json
       }
       enqueue_user_movies: {
-        Args: {
-          p_user_id: string
-          p_movies: Json
-        }
+        Args: { p_movies: Json; p_user_id: string }
         Returns: number
       }
       record_swipe_event: {
         Args: {
-          p_tmdb_movie_id: number
-          p_action: Database['public']['Enums']['swipe_action']
-          p_movie_title?: string
-          p_movie_year?: number
+          p_action: Database["public"]["Enums"]["swipe_action"]
           p_movie_director?: string
           p_movie_genre?: string
-          p_poster_url?: string
           p_movie_synopsis?: string
+          p_movie_title?: string
+          p_movie_year?: number
+          p_poster_url?: string
           p_recommendation_reason?: string
           p_source?: string
+          p_tmdb_movie_id: number
         }
         Returns: boolean
       }
     }
     Enums: {
-      swipe_action: 'unwatched' | 'watched' | 'loved' | 'disliked'
+      swipe_action: "unwatched" | "watched" | "loved" | "disliked"
     }
     CompositeTypes: {
       [_ in never]: never
     }
   }
 }
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {
+      swipe_action: ["unwatched", "watched", "loved", "disliked"],
+    },
+  },
+} as const

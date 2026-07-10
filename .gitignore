@@ -9,4 +9,4 @@ coverage/
 .bruin.yml
 agent/
 plan/
-supabase/
+tsconfig.tsbuildinfo
