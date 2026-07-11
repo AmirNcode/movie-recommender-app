@@ -21,6 +21,8 @@ import { validateMovie } from '@/lib/validate-movie';
 import { assertServerEnv } from '@/lib/env';
 import { buildPosterUrl, fetchTrailerKey, fetchWatchProviders, pickBestTmdbMatch } from '@/lib/tmdb';
 import { getClientIp } from '@/lib/request-ip';
+import { withAffiliateParams } from '@/lib/affiliate';
+import { isPro } from '@/lib/billing';
 
 // Throws on first server-side import at runtime if required env is missing.
 assertServerEnv();
@@ -40,8 +42,7 @@ type TasteProfile = {
 
 const WATCH_PROVIDER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// D3 default: 3 free recommendations/day. S14 (Stripe) will add an isPro()
-// bypass; until it lands every user is treated as free tier.
+// D3 default: 3 free recommendations/day. Pro users bypass the quota (S14).
 const FREE_TIER_DAILY_RECOMMENDATION_QUOTA = 3;
 
 function startOfUtcDayIso(): string {
@@ -91,7 +92,7 @@ function countryDataFromResults(results: Json | null, country: string): WatchPro
   const data = countryEntry as WatchProviderCountryData;
   return {
     country,
-    link: typeof data.link === 'string' ? data.link : undefined,
+    link: typeof data.link === 'string' ? withAffiliateParams(data.link) : undefined,
     stream: providerList(data.flatrate),
     rent: providerList(data.rent),
     buy: providerList(data.buy),
@@ -546,24 +547,26 @@ export async function getMovieRecommendation(): Promise<ActionResult<Recommendat
       return { ok: false, code: 'load_failed', message: 'Failed to get recommendation. Please try again.' };
     }
 
-    // S13: free-tier daily quota (D3). isPro() bypass lands with S14.
-    const { count: todaysCount, error: quotaError } = await admin
-      .from('recommendations_log')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .gte('created_at', startOfUtcDayIso());
+    // S13: free-tier daily quota (D3), bypassed for Pro (S14).
+    if (!(await isPro(user.id))) {
+      const { count: todaysCount, error: quotaError } = await admin
+        .from('recommendations_log')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', startOfUtcDayIso());
 
-    if (quotaError) {
-      logger.warn('RECOMMENDATION_QUOTA_CHECK_FAILED', { error: quotaError.message });
-      return { ok: false, code: 'load_failed', message: 'Failed to get recommendation. Please try again.' };
-    }
+      if (quotaError) {
+        logger.warn('RECOMMENDATION_QUOTA_CHECK_FAILED', { error: quotaError.message });
+        return { ok: false, code: 'load_failed', message: 'Failed to get recommendation. Please try again.' };
+      }
 
-    if ((todaysCount ?? 0) >= FREE_TIER_DAILY_RECOMMENDATION_QUOTA) {
-      return {
-        ok: false,
-        code: 'quota_exceeded',
-        message: 'Daily limit reached — upgrade for unlimited recommendations.',
-      };
+      if ((todaysCount ?? 0) >= FREE_TIER_DAILY_RECOMMENDATION_QUOTA) {
+        return {
+          ok: false,
+          code: 'quota_exceeded',
+          message: 'Daily limit reached — upgrade for unlimited recommendations.',
+        };
+      }
     }
 
     const { loved, watched, disliked, unwatched, seenTitles } = await buildTasteProfile(user.id);

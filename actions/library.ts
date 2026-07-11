@@ -5,6 +5,7 @@ import type { HistoryItem, ProfileDetails } from '@/types/library';
 import type { ActionResult } from '@/types/actions';
 import type { Database } from '@/types/supabase';
 import { logger } from '@/lib/logger';
+import { isPro } from '@/lib/billing';
 
 function mapHistoryRow(row: Database['public']['Tables']['swipe_events']['Row']): HistoryItem | null {
   if (row.action === 'unwatched') return null;
@@ -80,6 +81,7 @@ export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetai
         email: user.email ?? null,
         name: profile?.name ?? null,
         digestOptIn: profile?.digest_opt_in ?? false,
+        isPro: await isPro(user.id),
       },
     };
   } catch (error) {

@@ -1,7 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Sparkles, X } from 'lucide-react';
+import { Loader2, Sparkles, X } from 'lucide-react';
+import { createCheckoutSession } from '@/actions/billing';
+import type { BillingPlan } from '@/lib/stripe';
 
 const PRO_FEATURES = [
   'Unlimited daily recommendations',
@@ -9,13 +12,41 @@ const PRO_FEATURES = [
   'Full deck filters — decade range & minimum rating',
 ];
 
+// D2 default price points; the authoritative amounts live on the Stripe prices.
+const PLANS: { plan: BillingPlan; label: string; price: string }[] = [
+  { plan: 'monthly', label: 'Monthly', price: '$2.50/mo' },
+  { plan: 'yearly', label: 'Yearly', price: '$25/yr' },
+];
+
 /**
- * S13: shown when `getMovieRecommendation` returns `quota_exceeded`.
+ * S13/S14: shown when a free user hits the daily recommendation quota.
  *
- * Stripe checkout (S14) isn't wired up yet, so the CTA opens a waitlist
- * mailto until billing ships — swap for `createCheckoutSession` then.
+ * The CTA starts Stripe Checkout via {@link createCheckoutSession}. While
+ * billing is disabled (D4 — `BILLING_ENABLED` off) the action returns a
+ * `validation` failure; we surface it and fall back to the Pro waitlist so the
+ * modal degrades gracefully before go-live.
  */
 export function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const startCheckout = async (plan: BillingPlan) => {
+    setNotice(null);
+    setPendingPlan(plan);
+    try {
+      const result = await createCheckoutSession(plan);
+      if (result.ok) {
+        window.location.assign(result.data.url);
+        return;
+      }
+      setNotice(result.message);
+    } catch {
+      setNotice('Something went wrong starting checkout. Please try again.');
+    } finally {
+      setPendingPlan(null);
+    }
+  };
+
   return (
     <AnimatePresence>
       {open ? (
@@ -62,12 +93,32 @@ export function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => 
               ))}
             </ul>
 
-            <a
-              href="mailto:hello@filmmoo.com?subject=Filmmoo%20Pro%20waitlist"
-              className="block w-full py-3.5 rounded-2xl bg-white text-black font-bold tracking-wide text-center text-sm uppercase hover:bg-white/90 transition-colors"
-            >
-              Join the Pro waitlist
-            </a>
+            {notice ? (
+              <p className="text-xs text-amber-200/90 bg-amber-400/10 border border-amber-400/20 rounded-xl p-3">
+                {notice}
+              </p>
+            ) : null}
+
+            <div className="flex gap-2">
+              {PLANS.map(({ plan, label, price }) => (
+                <button
+                  key={plan}
+                  onClick={() => void startCheckout(plan)}
+                  disabled={pendingPlan !== null}
+                  className="flex-1 flex flex-col items-center gap-0.5 py-3 rounded-2xl bg-white text-black font-bold disabled:opacity-60 hover:bg-white/90 transition-colors"
+                >
+                  {pendingPlan === plan ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <>
+                      <span className="text-sm">{label}</span>
+                      <span className="text-xs font-semibold text-black/60">{price}</span>
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={onClose}
               className="w-full py-3 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold text-sm hover:bg-white/15 transition-colors"

@@ -20,6 +20,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { getClientIp } from '@/lib/request-ip';
+import { isPro } from '@/lib/billing';
 import {
   generateMovieNightCode,
   normalizeMovieNightCode,
@@ -37,9 +38,7 @@ import type {
 
 type CacheRow = Database['public']['Tables']['movies_cache']['Row'];
 
-// Free tier: one night per host per rolling 7 days. S14 (Stripe) will add an
-// isPro() bypass; until it lands every user is treated as free tier (mirrors
-// the S13 quota approach).
+// Free tier: one night per host per rolling 7 days. Pro users bypass the cap (S14).
 const FREE_TIER_NIGHTS_PER_WEEK = 1;
 const CODE_INSERT_ATTEMPTS = 6;
 
@@ -84,25 +83,27 @@ export async function createMovieNight(): Promise<ActionResult<MovieNightHandle>
   }
 
   try {
-    // Free-tier weekly cap (Pro bypass lands with S14).
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { count, error: countError } = await supabase
-      .from('movie_nights')
-      .select('id', { count: 'exact', head: true })
-      .eq('host_id', user.id)
-      .gte('created_at', weekAgo);
+    // Free-tier weekly cap, bypassed for Pro (S14).
+    if (!(await isPro(user.id))) {
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { count, error: countError } = await supabase
+        .from('movie_nights')
+        .select('id', { count: 'exact', head: true })
+        .eq('host_id', user.id)
+        .gte('created_at', weekAgo);
 
-    if (countError) {
-      logger.warn('MOVIE_NIGHT_COUNT_FAILED', { error: countError.message });
-      return { ok: false, code: 'load_failed', message: 'Could not start a movie night. Please try again.' };
-    }
+      if (countError) {
+        logger.warn('MOVIE_NIGHT_COUNT_FAILED', { error: countError.message });
+        return { ok: false, code: 'load_failed', message: 'Could not start a movie night. Please try again.' };
+      }
 
-    if ((count ?? 0) >= FREE_TIER_NIGHTS_PER_WEEK) {
-      return {
-        ok: false,
-        code: 'quota_exceeded',
-        message: 'Free tier is limited to one Movie Night per week — upgrade for unlimited nights.',
-      };
+      if ((count ?? 0) >= FREE_TIER_NIGHTS_PER_WEEK) {
+        return {
+          ok: false,
+          code: 'quota_exceeded',
+          message: 'Free tier is limited to one Movie Night per week — upgrade for unlimited nights.',
+        };
+      }
     }
 
     // Insert with a fresh code, retrying on the (rare) unique-code collision.

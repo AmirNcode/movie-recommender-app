@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { Sparkles } from 'lucide-react';
 import { updateDigestOptIn, updateEmail, updatePassword, updateProfileName } from '@/actions/library';
 import { deleteAccount, logout } from '@/actions/auth';
+import { createCheckoutSession, createPortalSession } from '@/actions/billing';
 import type { ProfileDetails } from '@/types/library';
 
 export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
@@ -17,6 +19,26 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeleting, startDeleteTransition] = useTransition();
+  const [isBillingPending, setIsBillingPending] = useState(false);
+
+  const handleBilling = async (action: 'upgrade' | 'manage') => {
+    setMessage(null);
+    setError(null);
+    setIsBillingPending(true);
+    try {
+      const result =
+        action === 'manage' ? await createPortalSession() : await createCheckoutSession('monthly');
+      if (result.ok) {
+        window.location.assign(result.data.url);
+        return;
+      }
+      setError(result.message);
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setIsBillingPending(false);
+    }
+  };
 
   const handleDigestToggle = async () => {
     const next = !digestOptIn;
@@ -133,6 +155,27 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
           <span
             className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${digestOptIn ? 'translate-x-5 bg-black' : 'translate-x-0 bg-white/70'}`}
           />
+        </button>
+      </div>
+
+      <div className="p-4 rounded-2xl border border-white/10 bg-black/20 space-y-3">
+        <div className="flex items-center gap-2 text-amber-300">
+          <Sparkles size={16} />
+          <span className="text-sm font-semibold text-white">
+            {profile?.isPro ? 'Filmmoo Pro' : 'Upgrade to Pro'}
+          </span>
+        </div>
+        <p className="text-xs text-white/50">
+          {profile?.isPro
+            ? 'Unlimited recommendations, Movie Nights, and full deck filters are active.'
+            : 'Unlock unlimited recommendations, Movie Nights, and full deck filters.'}
+        </p>
+        <button
+          onClick={() => void handleBilling(profile?.isPro ? 'manage' : 'upgrade')}
+          disabled={isBillingPending}
+          className="w-full h-11 rounded-2xl bg-white text-black font-semibold disabled:opacity-60"
+        >
+          {isBillingPending ? 'Loading…' : profile?.isPro ? 'Manage subscription' : 'Upgrade to Pro'}
         </button>
       </div>
 

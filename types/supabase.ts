@@ -286,6 +286,33 @@ export type Database = {
         }
         Relationships: []
       }
+      subscriptions: {
+        Row: {
+          current_period_end: string | null
+          status: string
+          stripe_customer_id: string
+          stripe_subscription_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          current_period_end?: string | null
+          status?: string
+          stripe_customer_id: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          current_period_end?: string | null
+          status?: string
+          stripe_customer_id?: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       swipe_events: {
         Row: {
           action: Database["public"]["Enums"]["swipe_action"]
