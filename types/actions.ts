@@ -17,7 +17,8 @@ export type ActionFailure = {
     | 'validation'
     | 'save_failed'
     | 'load_failed'
-    | 'no_taste_profile';
+    | 'no_taste_profile'
+    | 'quota_exceeded';
   /** Safe, user-displayable message. */
   message: string;
   /** Seconds until the caller may retry — only set for `rate_limited`. */

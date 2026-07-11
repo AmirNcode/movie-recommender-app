@@ -20,6 +20,7 @@ import { MovieDetailCard } from '@/components/movie-detail-card';
 import { ProfilePanel } from '@/components/profile-panel';
 import { SwipeCard } from '@/components/swipe-card';
 import { SwipeControls } from '@/components/swipe-controls';
+import { UpgradeModal } from '@/components/upgrade-modal';
 import { WatchlistPanel } from '@/components/watchlist-panel';
 import type { HistoryItem, MovieDetail, ProfileDetails, WatchlistItem } from '@/types/library';
 import type { Movie, SwipeAction, SwipedMovie, Recommendation } from '@/types/movie';
@@ -133,6 +134,7 @@ export default function Filmmoo() {
   const [isRecommending, setIsRecommending] = useState(false);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [profile, setProfile] = useState<ProfileDetails | null>(null);
@@ -346,7 +348,11 @@ export default function Filmmoo() {
     try {
       const result = await getMovieRecommendation();
       if (!result.ok) {
-        reportFailure(result);
+        if (result.code === 'quota_exceeded') {
+          setShowUpgradeModal(true);
+        } else {
+          reportFailure(result);
+        }
       } else if (result.data) {
         setRecommendation(result.data);
         setActiveView('recommendation');
@@ -516,6 +522,7 @@ export default function Filmmoo() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col overflow-hidden font-sans">
       <ErrorBanner message={errorMessage} />
+      <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} />
       <AppHeader
         activeView={activeView}
         onChangeView={(view) => void handleChangeView(view)}

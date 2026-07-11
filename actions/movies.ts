@@ -40,6 +40,15 @@ type TasteProfile = {
 
 const WATCH_PROVIDER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// D3 default: 3 free recommendations/day. S14 (Stripe) will add an isPro()
+// bypass; until it lands every user is treated as free tier.
+const FREE_TIER_DAILY_RECOMMENDATION_QUOTA = 3;
+
+function startOfUtcDayIso(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
+
 function parseCountryFromAcceptLanguage(value: string | null): string {
   const fallback = 'US';
   if (!value) return fallback;
@@ -531,6 +540,32 @@ export async function getMovieRecommendation(): Promise<ActionResult<Recommendat
   }
 
   try {
+    const admin = createAdminClient();
+    if (!admin) {
+      logger.error('RECOMMENDATION_QUOTA_UNCONFIGURED');
+      return { ok: false, code: 'load_failed', message: 'Failed to get recommendation. Please try again.' };
+    }
+
+    // S13: free-tier daily quota (D3). isPro() bypass lands with S14.
+    const { count: todaysCount, error: quotaError } = await admin
+      .from('recommendations_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .gte('created_at', startOfUtcDayIso());
+
+    if (quotaError) {
+      logger.warn('RECOMMENDATION_QUOTA_CHECK_FAILED', { error: quotaError.message });
+      return { ok: false, code: 'load_failed', message: 'Failed to get recommendation. Please try again.' };
+    }
+
+    if ((todaysCount ?? 0) >= FREE_TIER_DAILY_RECOMMENDATION_QUOTA) {
+      return {
+        ok: false,
+        code: 'quota_exceeded',
+        message: 'Daily limit reached — upgrade for unlimited recommendations.',
+      };
+    }
+
     const { loved, watched, disliked, unwatched, seenTitles } = await buildTasteProfile(user.id);
 
     if (loved.length + watched.length + disliked.length === 0) {
@@ -629,6 +664,22 @@ Return ONLY valid JSON — no markdown, no preamble.
       } catch (err) {
         logger.warn('POSTER_FETCH_FAILED', { error: String(err) });
       }
+    }
+
+    // S12: ledger row for quotas (S13), analytics, and the S11 A/B engine
+    // comparison. Best-effort — a logging failure must not fail the response
+    // the user is already holding.
+    const { error: logError } = await admin.from('recommendations_log').insert({
+      user_id: user.id,
+      tmdb_movie_id: recommendation.tmdbId || null,
+      movie_title: recommendation.title || null,
+      reason: recommendation.reason || null,
+      engine: 'freeform',
+      prompt_tokens: response.usageMetadata?.promptTokenCount ?? null,
+      output_tokens: response.usageMetadata?.candidatesTokenCount ?? null,
+    });
+    if (logError) {
+      logger.warn('RECOMMENDATION_LOG_INSERT_FAILED', { error: logError.message });
     }
 
     return { ok: true, data: recommendation };

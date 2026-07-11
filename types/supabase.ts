@@ -122,6 +122,42 @@ export type Database = {
         }
         Relationships: []
       }
+      recommendations_log: {
+        Row: {
+          created_at: string
+          engine: string
+          id: string
+          movie_title: string | null
+          output_tokens: number | null
+          prompt_tokens: number | null
+          reason: string | null
+          tmdb_movie_id: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          engine?: string
+          id?: string
+          movie_title?: string | null
+          output_tokens?: number | null
+          prompt_tokens?: number | null
+          reason?: string | null
+          tmdb_movie_id?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          engine?: string
+          id?: string
+          movie_title?: string | null
+          output_tokens?: number | null
+          prompt_tokens?: number | null
+          reason?: string | null
+          tmdb_movie_id?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       shared_recommendations: {
         Row: {
           created_at: string
