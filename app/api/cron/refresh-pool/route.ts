@@ -54,6 +54,26 @@ async function backfillTrailers(
   return hydrated.length;
 }
 
+// S6: mark movie nights older than 24h as expired (unless already matched), so
+// stale waiting/active rows don't linger. Runs in the nightly pool cron.
+async function expireStaleMovieNights(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>
+): Promise<number> {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await admin
+    .from('movie_nights')
+    .update({ status: 'expired' })
+    .lt('created_at', cutoff)
+    .in('status', ['waiting', 'active'])
+    .select('id');
+
+  if (error) {
+    logger.warn('MOVIE_NIGHT_EXPIRE_FAILED', { error: error.message });
+    return 0;
+  }
+  return data?.length ?? 0;
+}
+
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -100,6 +120,7 @@ export async function GET(request: NextRequest) {
     }
 
     const trailersBackfilled = await backfillTrailers(apiKey, admin);
+    const nightsExpired = await expireStaleMovieNights(admin);
 
     const durationMs = Date.now() - startedAt;
     logger.info('REFRESH_POOL_DONE', {
@@ -107,6 +128,7 @@ export async function GET(request: NextRequest) {
       hydrated: hydrated.length,
       poolSize,
       trailersBackfilled,
+      nightsExpired,
       durationMs,
     });
 
@@ -116,6 +138,7 @@ export async function GET(request: NextRequest) {
       hydrated: hydrated.length,
       poolSize,
       trailersBackfilled,
+      nightsExpired,
       durationMs,
     });
   } catch (err) {

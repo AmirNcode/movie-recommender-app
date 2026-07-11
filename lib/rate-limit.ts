@@ -68,6 +68,13 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     shareRecommendation: { maxRequests: 10, windowMs: 60_000 },
     getPreferences: { maxRequests: 30, windowMs: 60_000 },
     setPreferences: { maxRequests: 10, windowMs: 60_000 },
+    // Movie Night (S6). Voting is fast-swipe cadence like saveSwipe; the rest
+    // are low-frequency lifecycle calls.
+    createMovieNight: { maxRequests: 10, windowMs: 60_000 },
+    joinMovieNight: { maxRequests: 20, windowMs: 60_000 },
+    getMovieNight: { maxRequests: 60, windowMs: 60_000 },
+    voteMovieNight: { maxRequests: 120, windowMs: 60_000 },
+    addMovieNightToWatchlists: { maxRequests: 20, windowMs: 60_000 },
     // Destructive and irreversible; 2/hour is generous for a legitimate user.
     deleteAccount: { maxRequests: 2, windowMs: 60 * 60_000 },
 };
