@@ -70,7 +70,7 @@ export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetai
   try {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('name')
+      .select('name, digest_opt_in')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -79,12 +79,29 @@ export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetai
       data: {
         email: user.email ?? null,
         name: profile?.name ?? null,
+        digestOptIn: profile?.digest_opt_in ?? false,
       },
     };
   } catch (error) {
     logger.error('GET_PROFILE_FAILED', { error: String(error) });
     return { ok: false, code: 'load_failed', message: 'Failed to load your profile.' };
   }
+}
+
+export async function updateDigestOptIn(optIn: boolean): Promise<{ status: 'success' } | { status: 'error'; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError) return { status: 'error', error: authError.message };
+  if (!user) return { status: 'error', error: 'Unauthorized' };
+
+  const { error } = await supabase.from('profiles').upsert({ id: user.id, digest_opt_in: optIn });
+  if (error) return { status: 'error', error: error.message };
+
+  return { status: 'success' };
 }
 
 export async function updateProfileName(formData: FormData): Promise<{ status: 'success' } | { status: 'error'; error: string }> {

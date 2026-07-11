@@ -86,16 +86,19 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string | null
+          digest_opt_in: boolean
           id: string
           name: string | null
         }
         Insert: {
           created_at?: string | null
+          digest_opt_in?: boolean
           id: string
           name?: string | null
         }
         Update: {
           created_at?: string | null
+          digest_opt_in?: boolean
           id?: string
           name?: string | null
         }

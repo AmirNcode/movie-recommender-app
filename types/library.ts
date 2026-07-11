@@ -29,4 +29,5 @@ export type HistoryItem = MovieDetail & {
 export type ProfileDetails = {
   email: string | null;
   name: string | null;
+  digestOptIn: boolean;
 };
