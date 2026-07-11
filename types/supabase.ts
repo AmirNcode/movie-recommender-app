@@ -14,6 +14,101 @@ export type Database = {
   }
   public: {
     Tables: {
+      movie_night_cards: {
+        Row: {
+          night_id: string
+          rank: number
+          tmdb_movie_id: number
+        }
+        Insert: {
+          night_id: string
+          rank: number
+          tmdb_movie_id: number
+        }
+        Update: {
+          night_id?: string
+          rank?: number
+          tmdb_movie_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "movie_night_cards_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "movie_nights"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "movie_night_cards_tmdb_movie_id_fkey"
+            columns: ["tmdb_movie_id"]
+            isOneToOne: false
+            referencedRelation: "movies_cache"
+            referencedColumns: ["tmdb_movie_id"]
+          },
+        ]
+      }
+      movie_night_votes: {
+        Row: {
+          created_at: string
+          liked: boolean
+          night_id: string
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          liked: boolean
+          night_id: string
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          liked?: boolean
+          night_id?: string
+          tmdb_movie_id?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "movie_night_votes_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "movie_nights"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      movie_nights: {
+        Row: {
+          code: string
+          created_at: string
+          guest_id: string | null
+          host_id: string
+          id: string
+          matched_tmdb_id: number | null
+          status: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          guest_id?: string | null
+          host_id: string
+          id?: string
+          matched_tmdb_id?: number | null
+          status?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          guest_id?: string | null
+          host_id?: string
+          id?: string
+          matched_tmdb_id?: number | null
+          status?: string
+        }
+        Relationships: []
+      }
       movies_cache: {
         Row: {
           cached_at: string
@@ -399,6 +494,15 @@ export type Database = {
         Args: { p_movies: Json; p_user_id: string }
         Returns: number
       }
+      fill_movie_night_cards: {
+        Args: {
+          p_count: number
+          p_guest: string
+          p_host: string
+          p_night_id: string
+        }
+        Returns: number
+      }
       fill_queue_from_pool: {
         Args: {
           p_count: number
@@ -425,6 +529,10 @@ export type Database = {
           p_tmdb_movie_id: number
         }
         Returns: boolean
+      }
+      resolve_movie_night: {
+        Args: { p_night_id: string; p_tmdb_id: number }
+        Returns: number
       }
     }
     Enums: {

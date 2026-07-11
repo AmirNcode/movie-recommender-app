@@ -10,3 +10,7 @@ coverage/
 agent/
 plan/
 tsconfig.tsbuildinfo
+
+# Playwright
+/test-results/
+/playwright-report/
