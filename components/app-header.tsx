@@ -1,8 +1,8 @@
 'use client';
 
-import { History, Sparkles, UserRound, Bookmark } from 'lucide-react';
+import { History, Sparkles, UserRound, Bookmark, SlidersHorizontal } from 'lucide-react';
 
-type View = 'swipe' | 'recommendation' | 'watchlist' | 'history' | 'profile';
+type View = 'swipe' | 'recommendation' | 'watchlist' | 'history' | 'profile' | 'filters';
 
 export function AppHeader({
   activeView,
@@ -30,6 +30,9 @@ export function AppHeader({
       </button>
       <div className="flex flex-col items-end gap-2">
         <div className="flex items-center justify-end gap-2 flex-wrap h-12">
+          <button onClick={() => onChangeView('filters')} className={variant(activeView === 'filters')} aria-label="Deck filters">
+            <SlidersHorizontal size={18} />
+          </button>
           <button onClick={() => onChangeView('profile')} className={variant(activeView === 'profile')} aria-label="Profile">
             <UserRound size={18} />
           </button>

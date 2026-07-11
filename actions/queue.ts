@@ -9,6 +9,7 @@ import { discoverCandidateIds, hydrateMoviesInChunks } from '@/lib/tmdb-discover
 import { checkRateLimit } from '@/lib/rate-limit';
 import { assertServerEnv } from '@/lib/env';
 import { getClientIp } from '@/lib/request-ip';
+import { getQueueFilterArgs } from '@/lib/user-preferences';
 import type { MovieCandidate } from '@/types/movie';
 import type { ActionFailure, ActionResult } from '@/types/actions';
 import type { QueuedMovie } from '@/types/queue';
@@ -77,9 +78,17 @@ async function fillQueueFromPool(userId: string, minimumToAdd: number): Promise<
   const admin = createAdminClient();
   if (!admin || minimumToAdd <= 0) return 0;
 
+  // S8: honor the user's saved genre filter (decade/rating are Pro-gated and
+  // always come back null pre-S14 — see lib/user-preferences.ts).
+  const filters = await getQueueFilterArgs(userId);
+
   const { data, error } = await admin.rpc('fill_queue_from_pool', {
     p_user_id: userId,
     p_count: minimumToAdd,
+    p_year_from: filters.yearFrom ?? undefined,
+    p_year_to: filters.yearTo ?? undefined,
+    p_min_vote: filters.minVote ?? undefined,
+    p_genres: filters.genres ?? undefined,
   });
 
   if (error) {

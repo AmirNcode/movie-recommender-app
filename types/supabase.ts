@@ -265,6 +265,33 @@ export type Database = {
           },
         ]
       }
+      user_preferences: {
+        Row: {
+          genres: number[]
+          min_vote: number | null
+          updated_at: string
+          user_id: string
+          year_from: number | null
+          year_to: number | null
+        }
+        Insert: {
+          genres?: number[]
+          min_vote?: number | null
+          updated_at?: string
+          user_id: string
+          year_from?: number | null
+          year_to?: number | null
+        }
+        Update: {
+          genres?: number[]
+          min_vote?: number | null
+          updated_at?: string
+          user_id?: string
+          year_from?: number | null
+          year_to?: number | null
+        }
+        Relationships: []
+      }
       watchlists: {
         Row: {
           created_at: string | null
