@@ -183,20 +183,26 @@ export type Database = {
       }
       profiles: {
         Row: {
+          cinema_dna: Json | null
           created_at: string | null
           digest_opt_in: boolean
+          dna_generated_at: string | null
           id: string
           name: string | null
         }
         Insert: {
+          cinema_dna?: Json | null
           created_at?: string | null
           digest_opt_in?: boolean
+          dna_generated_at?: string | null
           id: string
           name?: string | null
         }
         Update: {
+          cinema_dna?: Json | null
           created_at?: string | null
           digest_opt_in?: boolean
+          dna_generated_at?: string | null
           id?: string
           name?: string | null
         }
@@ -259,7 +265,9 @@ export type Database = {
       shared_recommendations: {
         Row: {
           created_at: string
+          dna: Json | null
           id: string
+          kind: string
           movie_title: string
           movie_year: number | null
           poster_url: string | null
@@ -269,7 +277,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          dna?: Json | null
           id?: string
+          kind?: string
           movie_title: string
           movie_year?: number | null
           poster_url?: string | null
@@ -279,7 +289,9 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          dna?: Json | null
           id?: string
+          kind?: string
           movie_title?: string
           movie_year?: number | null
           poster_url?: string | null

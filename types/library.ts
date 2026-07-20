@@ -32,4 +32,8 @@ export type ProfileDetails = {
   digestOptIn: boolean;
   /** Whether the user has an active Pro subscription (S14). */
   isPro: boolean;
+  /** Cached Cinema DNA report (S16), when one has been generated. */
+  cinemaDna: import('@/lib/cinema-dna').CinemaDna | null;
+  /** When the cached Cinema DNA was generated (ISO), or null. */
+  dnaGeneratedAt: string | null;
 };

@@ -16,6 +16,72 @@ export default async function OpengraphImage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const rec = await getSharedRecommendation(id);
 
+  if (rec?.kind === 'dna' && rec.dna) {
+    const dna = rec.dna;
+    return new ImageResponse(
+      (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            backgroundColor: '#0a0a0a',
+            color: '#ffffff',
+            padding: '80px',
+            fontFamily: 'sans-serif',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '24px',
+              letterSpacing: '6px',
+              textTransform: 'uppercase',
+              color: '#fcd34d',
+              marginBottom: '28px',
+            }}
+          >
+            Cinema DNA
+          </div>
+          <div style={{ fontSize: '72px', fontWeight: 700, lineHeight: 1.1, marginBottom: '28px' }}>
+            {dna.archetype}
+          </div>
+          <div
+            style={{
+              fontSize: '32px',
+              lineHeight: 1.4,
+              fontStyle: 'italic',
+              color: 'rgba(251,207,232,0.9)',
+              marginBottom: '40px',
+            }}
+          >
+            {dna.headline}
+          </div>
+          <div style={{ display: 'flex', gap: '16px' }}>
+            {dna.traits.map((trait) => (
+              <div
+                key={trait}
+                style={{
+                  display: 'flex',
+                  padding: '12px 24px',
+                  borderRadius: '9999px',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  fontSize: '24px',
+                  color: 'rgba(255,255,255,0.8)',
+                }}
+              >
+                {trait}
+              </div>
+            ))}
+          </div>
+        </div>
+      ),
+      size
+    );
+  }
+
   const title = rec ? rec.title : 'Filmmoo';
   const yearSuffix = rec?.year ? ` (${rec.year})` : '';
   const reason = rec?.reason ? truncate(rec.reason, 220) : 'AI-powered movie recommendations based on your taste.';
