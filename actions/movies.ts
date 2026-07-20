@@ -18,6 +18,12 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCachedMoviesByIds } from '@/lib/movie-queue';
 import { validateMovie } from '@/lib/validate-movie';
+import {
+  TASTE_WEIGHTS,
+  computeTasteVector,
+  fromVectorLiteral,
+  toVectorLiteral,
+} from '@/lib/embeddings';
 import { assertServerEnv } from '@/lib/env';
 import { buildPosterUrl, fetchTrailerKey, fetchWatchProviders, pickBestTmdbMatch } from '@/lib/tmdb';
 import { getClientIp } from '@/lib/request-ip';
@@ -28,7 +34,7 @@ import { isPro } from '@/lib/billing';
 assertServerEnv();
 
 /** Minimal movie metadata used to describe the user's taste to the model. */
-type TasteEntry = { title: string; year: number; director: string; genre: string };
+type TasteEntry = { tmdbId: number; title: string; year: number; director: string; genre: string };
 
 /** Server-built taste profile, partitioned by the user's latest action. */
 type TasteProfile = {
@@ -146,6 +152,7 @@ async function buildTasteProfile(userId: string): Promise<TasteProfile> {
       const cached = cachedMap.get(id);
       if (cached) {
         metadata.set(id, {
+          tmdbId: id,
           title: cached.title,
           year: cached.year,
           director: cached.director,
@@ -167,6 +174,7 @@ async function buildTasteProfile(userId: string): Promise<TasteProfile> {
         // Rows are newest-first; keep only the most recent per movie.
         if (metadata.has(row.tmdb_movie_id) || !row.movie_title) continue;
         metadata.set(row.tmdb_movie_id, {
+          tmdbId: row.tmdb_movie_id,
           title: row.movie_title,
           year: row.movie_year ?? 0,
           director: row.movie_director ?? 'Unknown Director',
@@ -512,11 +520,320 @@ export async function getTrailer(tmdbId: number): Promise<ActionResult<{ trailer
   }
 }
 
+const RECOMMENDATION_MODEL = 'gemini-2.5-flash';
+
+/** How many pool candidates the embeddings engine retrieves for re-ranking. */
+const CANDIDATE_COUNT = 30;
+/** Below this many candidates the embeddings engine defers to freeform. */
+const MIN_CANDIDATES = 5;
+
+/** Result of one generation engine run, ready for the ledger + response. */
+type GenerationOutcome = {
+  recommendation: Recommendation;
+  promptTokens: number | null;
+  outputTokens: number | null;
+  engine: 'freeform' | 'embeddings';
+};
+
+/** The four taste-profile list sections shared by both engine prompts. */
+function tasteSectionsText(profile: TasteProfile): string {
+  return `LOVED (highly rated by user):
+${profile.loved.length ? profile.loved.map(tasteLabel).join('\n') : 'None yet'}
+
+WATCHED AND LIKED (neutral positive):
+${profile.watched.length ? profile.watched.map(tasteLabel).join('\n') : 'None yet'}
+
+DISLIKED:
+${profile.disliked.length ? profile.disliked.map(tasteLabel).join('\n') : 'None yet'}
+
+HAVEN'T WATCHED (swiped past):
+${profile.unwatched.length ? profile.unwatched.map(tasteLabel).join('\n') : 'None yet'}`;
+}
+
+/**
+ * Legacy free-form engine: Gemini invents any film outside the seen lists,
+ * then TMDB search resolves the poster/id. Returns null when the model
+ * produced nothing usable (caller responds `data: null`, no ledger row).
+ */
+async function generateFreeformRecommendation(
+  ai: GoogleGenAI,
+  profile: TasteProfile
+): Promise<GenerationOutcome | null> {
+  const prompt = `
+You are a cinephile recommendation engine. Analyse the user's taste profile
+below, then recommend ONE film they are very likely to love.
+
+## User taste profile
+
+${tasteSectionsText(profile)}
+
+## Instructions
+
+1. First, silently identify 2-3 patterns in the loved list (genres, directors,
+   themes, tone, era). Use these patterns to drive your pick.
+2. Recommend ONE film that is NOT in any of the lists above. Do not recommend:
+   ${profile.seenTitles.join(', ')}
+3. Avoid defaulting to the single most famous film in a genre.
+4. The "reason" field should explain specifically *why* this matches their
+   taste (reference their loved films by name).
+
+Return ONLY valid JSON — no markdown, no preamble.
+`.trim();
+
+  const response = await ai.models.generateContent({
+    model: RECOMMENDATION_MODEL,
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          year: { type: Type.INTEGER },
+          director: { type: Type.STRING },
+          genre: { type: Type.STRING },
+          synopsis: { type: Type.STRING },
+          reason: { type: Type.STRING },
+        },
+        required: ['title', 'year', 'director', 'genre', 'synopsis', 'reason'],
+      },
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    logger.error('GEMINI_EMPTY_RESPONSE');
+    return null;
+  }
+
+  const parsed: unknown = JSON.parse(text);
+  if (!isValidRecommendation(parsed)) {
+    logger.error('GEMINI_INVALID_SHAPE', {
+      preview: String(JSON.stringify(parsed)).slice(0, 200),
+    });
+    return null;
+  }
+
+  const recommendation: Recommendation = { ...parsed, source: 'recommendation' };
+
+  const apiKey = process.env.TMDB_API_KEY;
+  if (apiKey && recommendation.title) {
+    try {
+      const searchRes = await fetch(
+        `https://api.themoviedb.org/3/search/movie` +
+          `?api_key=${apiKey}` +
+          `&query=${encodeURIComponent(recommendation.title)}` +
+          `&year=${recommendation.year}` +
+          `&language=en-US`
+      );
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        const bestMatch = pickBestTmdbMatch(searchData.results, recommendation);
+        if (bestMatch?.poster_path) {
+          recommendation.posterUrl = buildPosterUrl(bestMatch.poster_path);
+        }
+        if (bestMatch?.id) {
+          recommendation.tmdbId = Number(bestMatch.id);
+        }
+      }
+    } catch (err) {
+      logger.warn('POSTER_FETCH_FAILED', { error: String(err) });
+    }
+  }
+
+  return {
+    recommendation,
+    promptTokens: response.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: response.usageMetadata?.candidatesTokenCount ?? null,
+    engine: 'freeform',
+  };
+}
+
+/**
+ * S11 embeddings engine: the user's taste vector (weighted mean of their rated
+ * movies' embeddings) retrieves the closest unseen pool candidates via
+ * `match_candidates`; Gemini only re-ranks that list and writes the reason.
+ * The pick is guaranteed to be a real, in-catalog movie with cached metadata,
+ * so no TMDB search round-trip is needed.
+ *
+ * Returns null whenever this engine can't run (no rated-movie embeddings yet,
+ * pool too small, RPC failure) — the caller then falls back to freeform.
+ */
+async function generateEmbeddingRecommendation(
+  ai: GoogleGenAI,
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  userId: string,
+  profile: TasteProfile
+): Promise<GenerationOutcome | null> {
+  const weighted = [
+    ...profile.loved.map((e) => ({ id: e.tmdbId, weight: TASTE_WEIGHTS.loved })),
+    ...profile.watched.map((e) => ({ id: e.tmdbId, weight: TASTE_WEIGHTS.watched })),
+    ...profile.disliked.map((e) => ({ id: e.tmdbId, weight: TASTE_WEIGHTS.disliked })),
+  ];
+  if (weighted.length === 0) return null;
+
+  const { data: vectorRows, error: vectorError } = await admin
+    .from('movies_cache')
+    .select('tmdb_movie_id, embedding')
+    .in('tmdb_movie_id', weighted.map((w) => w.id))
+    .not('embedding', 'is', null);
+
+  if (vectorError || !vectorRows || vectorRows.length === 0) {
+    logger.warn('EMBEDDINGS_NO_RATED_VECTORS', {
+      rated: weighted.length,
+      error: vectorError?.message,
+    });
+    return null;
+  }
+
+  const vectorById = new Map(
+    vectorRows.map((row) => [row.tmdb_movie_id, fromVectorLiteral(row.embedding)])
+  );
+  const entries = weighted.flatMap(({ id, weight }) => {
+    const embedding = vectorById.get(id);
+    return embedding ? [{ embedding, weight }] : [];
+  });
+
+  const tasteVector = computeTasteVector(entries);
+  if (!tasteVector) {
+    logger.warn('EMBEDDINGS_TASTE_VECTOR_EMPTY', { entries: entries.length });
+    return null;
+  }
+
+  const { data: candidates, error: matchError } = await admin.rpc('match_candidates', {
+    p_user_id: userId,
+    p_query: toVectorLiteral(tasteVector),
+    p_count: CANDIDATE_COUNT,
+  });
+
+  if (matchError || !candidates || candidates.length < MIN_CANDIDATES) {
+    logger.warn('EMBEDDINGS_POOL_EXHAUSTED', {
+      count: candidates?.length ?? 0,
+      error: matchError?.message,
+    });
+    return null;
+  }
+
+  const candidateById = new Map(candidates.map((c) => [c.tmdb_movie_id, c]));
+  const candidateLines = candidates.map((c) => {
+    const year = c.year ? ` (${c.year})` : '';
+    const genre = c.genre ? ` [${sanitiseForPrompt(c.genre)}]` : '';
+    const synopsis = c.synopsis ? ` — ${sanitiseForPrompt(c.synopsis)}` : '';
+    return `- id ${c.tmdb_movie_id}: ${sanitiseForPrompt(c.title)}${year}${genre}${synopsis}`;
+  });
+
+  const basePrompt = `
+You are a cinephile recommendation engine. Analyse the user's taste profile,
+then pick the ONE candidate film they are most likely to love.
+
+## User taste profile
+
+${tasteSectionsText(profile)}
+
+## Candidate films (you MUST pick exactly one of these, by id)
+
+${candidateLines.join('\n')}
+
+## Instructions
+
+1. Silently identify 2-3 patterns in the loved list (genres, directors, themes,
+   tone, era) and use them to rank the candidates.
+2. Return the id of the single best-fitting candidate. Do not invent an id.
+3. Avoid defaulting to the most famous candidate.
+4. The "reason" field should explain specifically *why* this matches their
+   taste (reference their loved films by name).
+
+Return ONLY valid JSON — no markdown, no preamble.
+`.trim();
+
+  let promptTokens: number | null = null;
+  let outputTokens: number | null = null;
+  const addUsage = (usage?: { promptTokenCount?: number; candidatesTokenCount?: number }) => {
+    if (usage?.promptTokenCount != null) promptTokens = (promptTokens ?? 0) + usage.promptTokenCount;
+    if (usage?.candidatesTokenCount != null) outputTokens = (outputTokens ?? 0) + usage.candidatesTokenCount;
+  };
+
+  let chosen: (typeof candidates)[number] | null = null;
+  let reason = '';
+
+  for (let attempt = 0; attempt < 2 && !chosen; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: RECOMMENDATION_MODEL,
+        contents:
+          attempt === 0
+            ? basePrompt
+            : `${basePrompt}\n\nIMPORTANT: Your previous answer was not a valid candidate id. Return the tmdbId of one movie from the candidate list above.`,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              tmdbId: { type: Type.INTEGER },
+              reason: { type: Type.STRING },
+            },
+            required: ['tmdbId', 'reason'],
+          },
+        },
+      });
+      addUsage(response.usageMetadata);
+
+      const parsed: unknown = response.text ? JSON.parse(response.text) : null;
+      if (parsed && typeof parsed === 'object') {
+        const obj = parsed as { tmdbId?: unknown; reason?: unknown };
+        const candidate =
+          typeof obj.tmdbId === 'number' ? candidateById.get(obj.tmdbId) : undefined;
+        if (candidate && typeof obj.reason === 'string' && obj.reason.trim()) {
+          chosen = candidate;
+          reason = obj.reason.trim();
+          break;
+        }
+      }
+      logger.warn('EMBEDDINGS_RERANK_INVALID_ID', { attempt });
+    } catch (err) {
+      logger.warn('EMBEDDINGS_RERANK_ATTEMPT_FAILED', { attempt, error: String(err) });
+    }
+  }
+
+  if (!chosen) {
+    // Spec fallback: highest-similarity candidate with a templated reason.
+    chosen = candidates[0];
+    const lovedNames = profile.loved
+      .slice(0, 2)
+      .map((e) => e.title)
+      .filter(Boolean);
+    reason = lovedNames.length
+      ? `A close match to your taste profile — it shares DNA with ${lovedNames.join(' and ')}.`
+      : 'The closest match to your taste profile right now.';
+    logger.warn('EMBEDDINGS_RERANK_FALLBACK_TOP_CANDIDATE', {});
+  }
+
+  return {
+    recommendation: {
+      title: chosen.title,
+      year: chosen.year ?? 0,
+      director: chosen.director ?? 'Unknown Director',
+      genre: chosen.genre ?? 'Unknown Genre',
+      synopsis: chosen.synopsis ?? '',
+      reason: reason.slice(0, 2000),
+      posterUrl: chosen.poster_url ?? undefined,
+      tmdbId: chosen.tmdb_movie_id,
+      source: 'recommendation',
+    },
+    promptTokens,
+    outputTokens,
+    engine: 'embeddings',
+  };
+}
+
 /**
  * Generates a personalized movie recommendation using Gemini.
  *
  * The taste profile is built server-side from persisted swipe state, so it
- * survives page reloads and cannot be spoofed by the client.
+ * survives page reloads and cannot be spoofed by the client. Engine selection
+ * (S11): embeddings retrieval + re-rank by default; `RECS_ENGINE=freeform`
+ * forces the legacy free-form path for A/B comparison, which is also the
+ * automatic fallback when the embeddings engine can't run.
  */
 export async function getMovieRecommendation(): Promise<ActionResult<Recommendation | null>> {
   const supabase = await createClient();
@@ -569,105 +886,26 @@ export async function getMovieRecommendation(): Promise<ActionResult<Recommendat
       }
     }
 
-    const { loved, watched, disliked, unwatched, seenTitles } = await buildTasteProfile(user.id);
+    const profile = await buildTasteProfile(user.id);
 
-    if (loved.length + watched.length + disliked.length === 0) {
+    if (profile.loved.length + profile.watched.length + profile.disliked.length === 0) {
       return { ok: false, code: 'no_taste_profile', message: 'Rate at least one movie first.' };
     }
 
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-    const prompt = `
-You are a cinephile recommendation engine. Analyse the user's taste profile
-below, then recommend ONE film they are very likely to love.
-
-## User taste profile
-
-LOVED (highly rated by user):
-${loved.length ? loved.map(tasteLabel).join('\n') : 'None yet'}
-
-WATCHED AND LIKED (neutral positive):
-${watched.length ? watched.map(tasteLabel).join('\n') : 'None yet'}
-
-DISLIKED:
-${disliked.length ? disliked.map(tasteLabel).join('\n') : 'None yet'}
-
-HAVEN'T WATCHED (swiped past):
-${unwatched.length ? unwatched.map(tasteLabel).join('\n') : 'None yet'}
-
-## Instructions
-
-1. First, silently identify 2-3 patterns in the loved list (genres, directors,
-   themes, tone, era). Use these patterns to drive your pick.
-2. Recommend ONE film that is NOT in any of the lists above. Do not recommend:
-   ${seenTitles.join(', ')}
-3. Avoid defaulting to the single most famous film in a genre.
-4. The "reason" field should explain specifically *why* this matches their
-   taste (reference their loved films by name).
-
-Return ONLY valid JSON — no markdown, no preamble.
-`.trim();
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            year: { type: Type.INTEGER },
-            director: { type: Type.STRING },
-            genre: { type: Type.STRING },
-            synopsis: { type: Type.STRING },
-            reason: { type: Type.STRING },
-          },
-          required: ['title', 'year', 'director', 'genre', 'synopsis', 'reason'],
-        },
-      },
-    });
-
-    const text = response.text;
-    if (!text) {
-      logger.error('GEMINI_EMPTY_RESPONSE');
+    let outcome: GenerationOutcome | null = null;
+    if (process.env.RECS_ENGINE !== 'freeform') {
+      outcome = await generateEmbeddingRecommendation(ai, admin, user.id, profile);
+    }
+    if (!outcome) {
+      outcome = await generateFreeformRecommendation(ai, profile);
+    }
+    if (!outcome) {
       return { ok: true, data: null };
     }
 
-    const parsed: unknown = JSON.parse(text);
-    if (!isValidRecommendation(parsed)) {
-      logger.error('GEMINI_INVALID_SHAPE', {
-        preview: String(JSON.stringify(parsed)).slice(0, 200),
-      });
-      return { ok: true, data: null };
-    }
-
-    const recommendation: Recommendation = { ...parsed, source: 'recommendation' };
-
-    const apiKey = process.env.TMDB_API_KEY;
-    if (apiKey && recommendation.title) {
-      try {
-        const searchRes = await fetch(
-          `https://api.themoviedb.org/3/search/movie` +
-            `?api_key=${apiKey}` +
-            `&query=${encodeURIComponent(recommendation.title)}` +
-            `&year=${recommendation.year}` +
-            `&language=en-US`
-        );
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          const bestMatch = pickBestTmdbMatch(searchData.results, recommendation);
-          if (bestMatch?.poster_path) {
-            recommendation.posterUrl = buildPosterUrl(bestMatch.poster_path);
-          }
-          if (bestMatch?.id) {
-            recommendation.tmdbId = Number(bestMatch.id);
-          }
-        }
-      } catch (err) {
-        logger.warn('POSTER_FETCH_FAILED', { error: String(err) });
-      }
-    }
+    const { recommendation } = outcome;
 
     // S12: ledger row for quotas (S13), analytics, and the S11 A/B engine
     // comparison. Best-effort — a logging failure must not fail the response
@@ -677,9 +915,9 @@ Return ONLY valid JSON — no markdown, no preamble.
       tmdb_movie_id: recommendation.tmdbId || null,
       movie_title: recommendation.title || null,
       reason: recommendation.reason || null,
-      engine: 'freeform',
-      prompt_tokens: response.usageMetadata?.promptTokenCount ?? null,
-      output_tokens: response.usageMetadata?.candidatesTokenCount ?? null,
+      engine: outcome.engine,
+      prompt_tokens: outcome.promptTokens,
+      output_tokens: outcome.outputTokens,
     });
     if (logError) {
       logger.warn('RECOMMENDATION_LOG_INSERT_FAILED', { error: logError.message });

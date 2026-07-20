@@ -113,6 +113,7 @@ export type Database = {
         Row: {
           cached_at: string
           director: string | null
+          embedding: string | null
           genre: string | null
           original_language: string | null
           pool_rank: number | null
@@ -135,6 +136,7 @@ export type Database = {
         Insert: {
           cached_at?: string
           director?: string | null
+          embedding?: string | null
           genre?: string | null
           original_language?: string | null
           pool_rank?: number | null
@@ -157,6 +159,7 @@ export type Database = {
         Update: {
           cached_at?: string
           director?: string | null
+          embedding?: string | null
           genre?: string | null
           original_language?: string | null
           pool_rank?: number | null
@@ -540,6 +543,19 @@ export type Database = {
           p_year_to?: number
         }
         Returns: number
+      }
+      match_candidates: {
+        Args: { p_count?: number; p_query: string; p_user_id: string }
+        Returns: {
+          director: string
+          genre: string
+          poster_url: string
+          similarity: number
+          synopsis: string
+          title: string
+          tmdb_movie_id: number
+          year: number
+        }[]
       }
       rebuild_movie_pool: { Args: { p_tmdb_ids: number[] }; Returns: number }
       record_swipe_event: {
