@@ -14,3 +14,4 @@ tsconfig.tsbuildinfo
 # Playwright
 /test-results/
 /playwright-report/
+skills-lock.json

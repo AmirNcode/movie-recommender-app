@@ -6,6 +6,7 @@ import type { ActionResult } from '@/types/actions';
 import type { Database } from '@/types/supabase';
 import { logger } from '@/lib/logger';
 import { isPro } from '@/lib/billing';
+import { capCinemaDna, isValidCinemaDna } from '@/lib/cinema-dna';
 
 function mapHistoryRow(row: Database['public']['Tables']['swipe_events']['Row']): HistoryItem | null {
   if (row.action === 'unwatched') return null;
@@ -71,7 +72,7 @@ export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetai
   try {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('name, digest_opt_in')
+      .select('name, digest_opt_in, cinema_dna, dna_generated_at')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -82,6 +83,8 @@ export async function getCurrentUserProfile(): Promise<ActionResult<ProfileDetai
         name: profile?.name ?? null,
         digestOptIn: profile?.digest_opt_in ?? false,
         isPro: await isPro(user.id),
+        cinemaDna: isValidCinemaDna(profile?.cinema_dna) ? capCinemaDna(profile.cinema_dna) : null,
+        dnaGeneratedAt: profile?.dna_generated_at ?? null,
       },
     };
   } catch (error) {

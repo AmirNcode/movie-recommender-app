@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Dna, Share2, Sparkles } from 'lucide-react';
 import { updateDigestOptIn, updateEmail, updatePassword, updateProfileName } from '@/actions/library';
 import { deleteAccount, logout } from '@/actions/auth';
 import { createCheckoutSession, createPortalSession } from '@/actions/billing';
+import { getCinemaDna, shareCinemaDna } from '@/actions/cinema-dna';
+import type { CinemaDna } from '@/lib/cinema-dna';
 import type { ProfileDetails } from '@/types/library';
 
 export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
@@ -12,6 +14,9 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
   const [email, setEmail] = useState(profile?.email ?? '');
   const [password, setPassword] = useState('');
   const [digestOptIn, setDigestOptIn] = useState(profile?.digestOptIn ?? false);
+  const [dna, setDna] = useState<CinemaDna | null>(profile?.cinemaDna ?? null);
+  const [dnaGeneratedAt, setDnaGeneratedAt] = useState<string | null>(profile?.dnaGeneratedAt ?? null);
+  const [isDnaPending, setIsDnaPending] = useState(false);
   const [isDigestPending, setIsDigestPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +59,57 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
       return;
     }
     setMessage(next ? 'Weekly digest enabled.' : 'Weekly digest disabled.');
+  };
+
+  const handleGenerateDna = async (regenerate: boolean) => {
+    setMessage(null);
+    setError(null);
+    setIsDnaPending(true);
+    try {
+      // The server regenerates at most weekly: a fresh cached report comes back
+      // unchanged, which we surface honestly instead of pretending it's new.
+      const wasFresh =
+        regenerate &&
+        dnaGeneratedAt !== null &&
+        Date.now() - new Date(dnaGeneratedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
+      const result = await getCinemaDna(regenerate ? { regenerate: true } : undefined);
+      if (result.ok) {
+        setDna(result.data.dna);
+        setDnaGeneratedAt(result.data.generatedAt || null);
+        if (wasFresh) setMessage('Your Cinema DNA is fresh — regeneration reopens weekly.');
+        return;
+      }
+      setError(result.message);
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setIsDnaPending(false);
+    }
+  };
+
+  const handleShareDna = async () => {
+    setMessage(null);
+    setError(null);
+    setIsDnaPending(true);
+    try {
+      const result = await shareCinemaDna();
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      const url = `${window.location.origin}${result.data.url}`;
+      if (navigator.share) {
+        await navigator.share({ title: 'My Cinema DNA', url }).catch(() => undefined);
+        setMessage('Share link created.');
+      } else {
+        await navigator.clipboard.writeText(url);
+        setMessage('Share link copied to clipboard.');
+      }
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setIsDnaPending(false);
+    }
   };
 
   const handleDelete = () => {
@@ -177,6 +233,67 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
         >
           {isBillingPending ? 'Loading…' : profile?.isPro ? 'Manage subscription' : 'Upgrade to Pro'}
         </button>
+      </div>
+
+      <div className="p-4 rounded-2xl border border-white/10 bg-black/20 space-y-3">
+        <div className="flex items-center gap-2 text-amber-300">
+          <Dna size={16} />
+          <span className="text-sm font-semibold text-white">Cinema DNA</span>
+        </div>
+
+        {dna ? (
+          <div className="space-y-3">
+            <div>
+              <div className="font-serif text-xl font-bold text-white">{dna.archetype}</div>
+              <p className="mt-1 text-sm italic text-pink-100/90">{dna.headline}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {dna.traits.map((trait) => (
+                <span key={trait} className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80">
+                  {trait}
+                </span>
+              ))}
+            </div>
+            <div className="space-y-1 text-xs text-white/60">
+              <p><span className="font-semibold text-white/80">Guilty pleasure:</span> {dna.guilty_pleasure}</p>
+              <p><span className="font-semibold text-white/80">Blind spot:</span> {dna.blind_spot}</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => void handleShareDna()}
+                disabled={isDnaPending}
+                className="flex-1 h-11 rounded-2xl bg-white text-black font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2"
+              >
+                <Share2 size={16} /> Share
+              </button>
+              <button
+                onClick={() => void handleGenerateDna(true)}
+                disabled={isDnaPending}
+                title="Regenerates at most once a week"
+                className="flex-1 h-11 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold disabled:opacity-60"
+              >
+                {isDnaPending ? 'Working…' : 'Regenerate'}
+              </button>
+            </div>
+          </div>
+        ) : profile?.isPro ? (
+          <div className="space-y-3">
+            <p className="text-xs text-white/50">
+              A playful AI-written taste report — your archetype, traits, guilty pleasure, and blind spot. Shareable.
+            </p>
+            <button
+              onClick={() => void handleGenerateDna(false)}
+              disabled={isDnaPending}
+              className="w-full h-11 rounded-2xl bg-white text-black font-semibold disabled:opacity-60"
+            >
+              {isDnaPending ? 'Analysing your taste…' : 'Generate my Cinema DNA'}
+            </button>
+          </div>
+        ) : (
+          <p className="text-xs text-white/50">
+            A shareable AI-written taste report of your movie personality — included with Pro.
+          </p>
+        )}
       </div>
 
       <form action={logout}>

@@ -17,7 +17,7 @@ Blockers are marked on the items they block. Where a default is stated, use it i
 | ID | Decision | Blocks | Default if unanswered |
 |----|----------|--------|----------------------|
 | D1 | Product name: "Filmmoo" (current code) vs "SceneIt" (old PRD) + production domain | S2 (share URLs/OG), S9 (email sender), S14 (Stripe product names) | Keep "Filmmoo" |
-| D2 | Pro price point | S14 | $3.99/mo, $29/yr |
+| D2 | Pro price point | S14 | $2.5/mo, $25/yr |
 | D3 | Free-tier daily recommendation quota | S13 | 3/day |
 | D4 | TMDB commercial license: purchased before or after paywall launch? (free TMDB API tier is non-commercial; charging without it violates ToS) | S14 go-live (not its implementation) | Implement S14 behind a disabled flag; do not enable billing until license confirmed |
 | D5 | Transactional email provider | S9 | Resend |

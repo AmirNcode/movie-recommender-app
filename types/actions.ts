@@ -18,7 +18,8 @@ export type ActionFailure = {
     | 'save_failed'
     | 'load_failed'
     | 'no_taste_profile'
-    | 'quota_exceeded';
+    | 'quota_exceeded'
+    | 'pro_required';
   /** Safe, user-displayable message. */
   message: string;
   /** Seconds until the caller may retry — only set for `rate_limited`. */

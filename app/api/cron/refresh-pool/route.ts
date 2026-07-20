@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCachedMoviesByIds, upsertMoviesCache } from '@/lib/movie-queue';
 import { collectPoolCandidateIds, hydrateMoviesInChunks } from '@/lib/tmdb-discovery';
+import { embedTexts, movieEmbeddingText, toVectorLiteral } from '@/lib/embeddings';
 import { logger } from '@/lib/logger';
 import type { SourceTier } from '@/types/queue';
 
@@ -74,6 +75,49 @@ async function expireStaleMovieNights(
   return data?.length ?? 0;
 }
 
+// S11: embed pool rows that don't have an embedding yet (new pool entrants;
+// the initial 634-row backlog was backfilled at ship time). Bounded per run so
+// the cron stays well inside its duration budget.
+const EMBED_BATCH_PER_RUN = 300;
+
+async function embedMissingPoolMovies(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>
+): Promise<number> {
+  const { data, error } = await admin
+    .from('movies_cache')
+    .select('tmdb_movie_id, title, year, genre, synopsis')
+    .not('pool_rank', 'is', null)
+    .is('embedding', null)
+    .limit(EMBED_BATCH_PER_RUN);
+
+  if (error) {
+    logger.warn('EMBED_POOL_QUERY_FAILED', { error: error.message });
+    return 0;
+  }
+  if (!data || data.length === 0) return 0;
+
+  const vectors = await embedTexts(data.map(movieEmbeddingText));
+
+  let embedded = 0;
+  for (let i = 0; i < data.length; i++) {
+    const vector = vectors[i];
+    if (!vector) continue;
+    const { error: updateError } = await admin
+      .from('movies_cache')
+      .update({ embedding: toVectorLiteral(vector) })
+      .eq('tmdb_movie_id', data[i].tmdb_movie_id);
+    if (updateError) {
+      logger.warn('EMBED_POOL_WRITE_FAILED', {
+        tmdbId: data[i].tmdb_movie_id,
+        error: updateError.message,
+      });
+      continue;
+    }
+    embedded++;
+  }
+  return embedded;
+}
+
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -121,6 +165,7 @@ export async function GET(request: NextRequest) {
 
     const trailersBackfilled = await backfillTrailers(apiKey, admin);
     const nightsExpired = await expireStaleMovieNights(admin);
+    const moviesEmbedded = await embedMissingPoolMovies(admin);
 
     const durationMs = Date.now() - startedAt;
     logger.info('REFRESH_POOL_DONE', {
@@ -129,6 +174,7 @@ export async function GET(request: NextRequest) {
       poolSize,
       trailersBackfilled,
       nightsExpired,
+      moviesEmbedded,
       durationMs,
     });
 
@@ -139,6 +185,7 @@ export async function GET(request: NextRequest) {
       poolSize,
       trailersBackfilled,
       nightsExpired,
+      moviesEmbedded,
       durationMs,
     });
   } catch (err) {

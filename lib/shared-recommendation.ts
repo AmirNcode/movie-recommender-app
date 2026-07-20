@@ -1,16 +1,21 @@
 import 'server-only';
 import { cache } from 'react';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { capCinemaDna, isValidCinemaDna, type CinemaDna } from '@/lib/cinema-dna';
 import { logger } from '@/lib/logger';
 
 /** A stored, publicly-shareable recommendation snapshot (no author identity). */
 export type SharedRecommendation = {
   id: string;
+  /** 'rec' = movie recommendation; 'dna' = Cinema DNA card (S16). */
+  kind: 'rec' | 'dna';
   tmdbId: number;
   title: string;
   year: number | null;
   posterUrl: string | null;
   reason: string | null;
+  /** Present only for kind 'dna'. */
+  dna: CinemaDna | null;
 };
 
 /** Basic UUID v4-shape check so a bogus id never hits the DB. */
@@ -41,7 +46,7 @@ export const getSharedRecommendation = cache(
 
     const { data, error } = await admin
       .from('shared_recommendations')
-      .select('id, tmdb_movie_id, movie_title, movie_year, poster_url, reason')
+      .select('id, kind, tmdb_movie_id, movie_title, movie_year, poster_url, reason, dna')
       .eq('id', id)
       .maybeSingle();
 
@@ -51,13 +56,16 @@ export const getSharedRecommendation = cache(
     }
     if (!data) return null;
 
+    const kind = data.kind === 'dna' ? 'dna' : 'rec';
     return {
       id: data.id,
+      kind,
       tmdbId: data.tmdb_movie_id,
       title: data.movie_title,
       year: data.movie_year,
       posterUrl: trustedPoster(data.poster_url),
       reason: data.reason,
+      dna: kind === 'dna' && isValidCinemaDna(data.dna) ? capCinemaDna(data.dna) : null,
     };
   }
 );

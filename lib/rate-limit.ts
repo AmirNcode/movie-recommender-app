@@ -80,6 +80,9 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     createPortalSession: { maxRequests: 10, windowMs: 60_000 },
     // Destructive and irreversible; 2/hour is generous for a legitimate user.
     deleteAccount: { maxRequests: 2, windowMs: 60 * 60_000 },
+    // Cinema DNA (S16): paid Gemini call, weekly cache — 2 generations/day.
+    getCinemaDna: { maxRequests: 2, windowMs: 24 * 60 * 60_000, failMode: 'closed' },
+    shareCinemaDna: { maxRequests: 5, windowMs: 60_000 },
 };
 
 import { createAdminClient } from '@/lib/supabase/admin';

@@ -113,6 +113,7 @@ export type Database = {
         Row: {
           cached_at: string
           director: string | null
+          embedding: string | null
           genre: string | null
           original_language: string | null
           pool_rank: number | null
@@ -135,6 +136,7 @@ export type Database = {
         Insert: {
           cached_at?: string
           director?: string | null
+          embedding?: string | null
           genre?: string | null
           original_language?: string | null
           pool_rank?: number | null
@@ -157,6 +159,7 @@ export type Database = {
         Update: {
           cached_at?: string
           director?: string | null
+          embedding?: string | null
           genre?: string | null
           original_language?: string | null
           pool_rank?: number | null
@@ -180,20 +183,26 @@ export type Database = {
       }
       profiles: {
         Row: {
+          cinema_dna: Json | null
           created_at: string | null
           digest_opt_in: boolean
+          dna_generated_at: string | null
           id: string
           name: string | null
         }
         Insert: {
+          cinema_dna?: Json | null
           created_at?: string | null
           digest_opt_in?: boolean
+          dna_generated_at?: string | null
           id: string
           name?: string | null
         }
         Update: {
+          cinema_dna?: Json | null
           created_at?: string | null
           digest_opt_in?: boolean
+          dna_generated_at?: string | null
           id?: string
           name?: string | null
         }
@@ -256,7 +265,9 @@ export type Database = {
       shared_recommendations: {
         Row: {
           created_at: string
+          dna: Json | null
           id: string
+          kind: string
           movie_title: string
           movie_year: number | null
           poster_url: string | null
@@ -266,7 +277,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          dna?: Json | null
           id?: string
+          kind?: string
           movie_title: string
           movie_year?: number | null
           poster_url?: string | null
@@ -276,7 +289,9 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          dna?: Json | null
           id?: string
+          kind?: string
           movie_title?: string
           movie_year?: number | null
           poster_url?: string | null
@@ -540,6 +555,19 @@ export type Database = {
           p_year_to?: number
         }
         Returns: number
+      }
+      match_candidates: {
+        Args: { p_count?: number; p_query: string; p_user_id: string }
+        Returns: {
+          director: string
+          genre: string
+          poster_url: string
+          similarity: number
+          synopsis: string
+          title: string
+          tmdb_movie_id: number
+          year: number
+        }[]
       }
       rebuild_movie_pool: { Args: { p_tmdb_ids: number[] }; Returns: number }
       record_swipe_event: {
