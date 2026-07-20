@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # e2e:
+  #   Playwright smoke spec needs a live Supabase project (to create/delete
+  #   a throwaway test user) and its secrets (NEXT_PUBLIC_SUPABASE_URL,
+  #   SUPABASE_SECRET_KEY, TMDB_API_KEY, GEMINI_API_KEY) configured as
+  #   repo/environment secrets before this can run in CI. Enable once those
+  #   secrets are wired up:
+  #
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v5
+  #     - uses: actions/setup-node@v5
+  #       with:
+  #         node-version: 24
+  #         cache: npm
+  #     - run: npm ci
+  #     - run: npx playwright install --with-deps chromium
+  #     - run: npm run test:e2e
+  #       env:
+  #         NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+  #         SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+  #         TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+  #         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  #         NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}

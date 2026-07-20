@@ -28,6 +28,7 @@ function mapCacheRow(row: CacheRow): CachedMovie {
     voteCount: row.vote_count ?? undefined,
     originalLanguage: row.original_language ?? undefined,
     sourceTier: (row.source_tier as SourceTier | null) ?? undefined,
+    trailerKey: row.trailer_key ?? undefined,
   };
 }
 
@@ -77,6 +78,7 @@ export async function upsertMoviesCache(movies: CachedMovie[]): Promise<void> {
     vote_count: movie.voteCount ?? null,
     original_language: movie.originalLanguage ?? null,
     source_tier: movie.sourceTier ?? null,
+    trailer_key: movie.trailerKey ?? null,
     cached_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }));

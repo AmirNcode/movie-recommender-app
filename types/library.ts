@@ -29,4 +29,7 @@ export type HistoryItem = MovieDetail & {
 export type ProfileDetails = {
   email: string | null;
   name: string | null;
+  digestOptIn: boolean;
+  /** Whether the user has an active Pro subscription (S14). */
+  isPro: boolean;
 };

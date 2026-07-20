@@ -5,12 +5,14 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/lib/logger';
 import { getActiveQueueForUser, getCachedMoviesByIds, getQueueConfig, getQueueState, upsertMoviesCache } from '@/lib/movie-queue';
+import { discoverCandidateIds, hydrateMoviesInChunks } from '@/lib/tmdb-discovery';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { assertServerEnv } from '@/lib/env';
 import { getClientIp } from '@/lib/request-ip';
+import { getQueueFilterArgs } from '@/lib/user-preferences';
 import type { MovieCandidate } from '@/types/movie';
 import type { ActionFailure, ActionResult } from '@/types/actions';
-import type { CachedMovie, QueuedMovie, SourceTier } from '@/types/queue';
+import type { QueuedMovie } from '@/types/queue';
 
 // Throws on first server-side import at runtime if required env is missing.
 assertServerEnv();
@@ -30,24 +32,6 @@ async function checkActionRateLimit(
     };
   }
   return null;
-}
-
-const TMDB_BASE = 'https://api.themoviedb.org/3';
-
-type TmdbDiscoverResult = { id: number };
-
-type DiscoverTierConfig = {
-  tier: SourceTier;
-  params: Record<string, string | number | boolean>;
-  pages: number[];
-};
-
-function buildUrl(path: string, params: Record<string, string | number | boolean>) {
-  const url = new URL(`${TMDB_BASE}${path}`);
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, String(value));
-  }
-  return url.toString();
 }
 
 async function resolveUserId(): Promise<{ ok: true; userId: string } | ActionFailure> {
@@ -86,149 +70,40 @@ async function getExcludedMovieIds(userId: string): Promise<Set<number>> {
   return excluded;
 }
 
-function getDiscoveryPlan(): DiscoverTierConfig[] {
-  return [
-    {
-      tier: 'mainstream',
-      params: {
-        include_adult: false,
-        include_video: false,
-        language: 'en-US',
-        sort_by: 'popularity.desc',
-        'vote_count.gte': '1000',
-        'vote_average.gte': '6.0',
-        'with_original_language': 'en',
-        'primary_release_date.gte': '2005-01-01',
-      },
-      pages: [1, 2, 3, 4, 5],
-    },
-    {
-      tier: 'broader-mainstream',
-      params: {
-        include_adult: false,
-        include_video: false,
-        language: 'en-US',
-        sort_by: 'popularity.desc',
-        'vote_count.gte': '300',
-        'vote_average.gte': '5.8',
-        'with_original_language': 'en',
-        'primary_release_date.gte': '1990-01-01',
-      },
-      pages: [1, 2, 3, 4, 5, 6, 7, 8],
-    },
-    {
-      tier: 'niche',
-      params: {
-        include_adult: false,
-        include_video: false,
-        language: 'en-US',
-        sort_by: 'vote_average.desc',
-        'vote_count.gte': '50',
-        'vote_average.gte': '6.0',
-        'primary_release_date.gte': '1970-01-01',
-      },
-      pages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    },
-  ];
-}
+/**
+ * S10 fast path: fill the queue from the shared candidate pool with a single
+ * SQL round-trip (no TMDB calls). Returns how many rows were enqueued.
+ */
+async function fillQueueFromPool(userId: string, minimumToAdd: number): Promise<number> {
+  const admin = createAdminClient();
+  if (!admin || minimumToAdd <= 0) return 0;
 
-async function discoverCandidateIds(apiKey: string, excluded: Set<number>, targetCount: number): Promise<Array<{ tmdbId: number; tier: SourceTier }>> {
-  const plan = getDiscoveryPlan();
-  const collected: Array<{ tmdbId: number; tier: SourceTier }> = [];
+  // S8: honor the user's saved genre filter (decade/rating are Pro-gated and
+  // always come back null pre-S14 — see lib/user-preferences.ts).
+  const filters = await getQueueFilterArgs(userId);
 
-  for (const tierPlan of plan) {
-    for (const page of tierPlan.pages) {
-      if (collected.length >= targetCount) return collected;
+  const { data, error } = await admin.rpc('fill_queue_from_pool', {
+    p_user_id: userId,
+    p_count: minimumToAdd,
+    p_year_from: filters.yearFrom ?? undefined,
+    p_year_to: filters.yearTo ?? undefined,
+    p_min_vote: filters.minVote ?? undefined,
+    p_genres: filters.genres ?? undefined,
+  });
 
-      const res = await fetch(
-        buildUrl('/discover/movie', {
-          api_key: apiKey,
-          ...tierPlan.params,
-          page,
-        }),
-        { cache: 'no-store' }
-      );
-
-      if (!res.ok) continue;
-      const data = await res.json();
-      const results: TmdbDiscoverResult[] = data.results ?? [];
-
-      for (const result of results) {
-        if (!result?.id || excluded.has(result.id)) continue;
-        excluded.add(result.id);
-        collected.push({ tmdbId: result.id, tier: tierPlan.tier });
-        if (collected.length >= targetCount) return collected;
-      }
-    }
+  if (error) {
+    logger.warn('QUEUE_REFILL_FROM_POOL_FAILED', { error: error.message, userId });
+    return 0;
   }
 
-  return collected;
+  return typeof data === 'number' ? data : 0;
 }
 
-async function hydrateMovie(apiKey: string, tmdbId: number, tier: SourceTier): Promise<CachedMovie | null> {
-  const res = await fetch(
-    buildUrl(`/movie/${tmdbId}`, {
-      api_key: apiKey,
-      append_to_response: 'credits',
-      language: 'en-US',
-    }),
-    { cache: 'no-store' }
-  );
-
-  if (!res.ok) return null;
-  const detail = await res.json();
-
-  const director =
-    (detail.credits?.crew ?? []).find((c: { job: string; name: string }) => c.job === 'Director')?.name ?? 'Unknown Director';
-
-  const genre =
-    (detail.genres ?? []).map((g: { name: string }) => g.name).join(', ') || 'Unknown Genre';
-
-  const year = detail.release_date ? parseInt(String(detail.release_date).split('-')[0], 10) : 0;
-  const posterUrl = detail.poster_path ? `https://image.tmdb.org/t/p/w500${detail.poster_path}` : undefined;
-  const topActors = (detail.credits?.cast ?? [])
-    .filter((actor: { name?: string }) => typeof actor.name === 'string' && actor.name.trim().length > 0)
-    .slice(0, 3)
-    .map((actor: { name: string }) => actor.name);
-
-  return {
-    tmdbId: Number(detail.id),
-    title: detail.title as string,
-    year,
-    director,
-    genre,
-    synopsis: (detail.overview as string) ?? '',
-    posterUrl,
-    topActors,
-    releaseDate: detail.release_date ?? undefined,
-    popularity: typeof detail.popularity === 'number' ? detail.popularity : undefined,
-    voteAverage: typeof detail.vote_average === 'number' ? detail.vote_average : undefined,
-    voteCount: typeof detail.vote_count === 'number' ? detail.vote_count : undefined,
-    originalLanguage: detail.original_language ?? undefined,
-    sourceTier: tier,
-  };
-}
-
-/** Hydrates TMDB details in bounded-concurrency slices to avoid a request storm. */
-async function hydrateMoviesInChunks(
-  apiKey: string,
-  items: Array<{ tmdbId: number; tier: SourceTier }>,
-  chunkSize = 8
-): Promise<CachedMovie[]> {
-  const hydrated: CachedMovie[] = [];
-  for (let i = 0; i < items.length; i += chunkSize) {
-    const slice = items.slice(i, i + chunkSize);
-    const results = await Promise.all(
-      slice.map((item) => hydrateMovie(apiKey, item.tmdbId, item.tier))
-    );
-    for (const movie of results) {
-      if (movie) hydrated.push(movie);
-    }
-  }
-  return hydrated;
-}
-
-async function fillQueueForUser(userId: string, minimumToAdd: number): Promise<void> {
+/**
+ * Legacy runtime TMDB discovery. Superseded by the shared pool (S10); retained
+ * only as the POOL_EXHAUSTED fallback when the pool can't satisfy the request.
+ */
+async function fillQueueFromTmdbDiscovery(userId: string, minimumToAdd: number): Promise<void> {
   const admin = createAdminClient();
   const apiKey = process.env.TMDB_API_KEY;
   if (!admin || !apiKey || minimumToAdd <= 0) return;
@@ -269,6 +144,29 @@ async function fillQueueForUser(userId: string, minimumToAdd: number): Promise<v
   }
 }
 
+/**
+ * Fills a user's queue with `minimumToAdd` cards. Pool-first (zero TMDB calls);
+ * only when the shared pool is short of the request does it fall back to the
+ * legacy runtime discovery path, logging POOL_EXHAUSTED so the shortfall is
+ * observable and the cron pool size can be tuned.
+ */
+async function fillQueueForUser(userId: string, minimumToAdd: number): Promise<void> {
+  if (minimumToAdd <= 0) return;
+
+  const insertedFromPool = await fillQueueFromPool(userId, minimumToAdd);
+  const remaining = minimumToAdd - insertedFromPool;
+  if (remaining <= 0) return;
+
+  logger.warn('POOL_EXHAUSTED', {
+    userId,
+    requested: minimumToAdd,
+    filledFromPool: insertedFromPool,
+    remaining,
+  });
+
+  await fillQueueFromTmdbDiscovery(userId, remaining);
+}
+
 function toMovieCandidate(movie: QueuedMovie): MovieCandidate {
   return {
     tmdbId: movie.tmdbId,
@@ -297,14 +195,14 @@ export async function getQueuedMovies(
 
     if (queued.length > 0) {
       // Serve immediately; top up below-watermark queues after the response so
-      // the TMDB fan-out never blocks a user-facing request.
+      // the refill never blocks a user-facing request.
       if (queueState.activeCount < queueConfig.lowWatermark) {
         after(() => fillQueueForUser(userId, queueConfig.targetSize - queueState.activeCount));
       }
       return { ok: true, data: queued.map(toMovieCandidate) };
     }
 
-    // Empty queue (first load): fetch a small batch synchronously for a fast
+    // Empty queue (first load): fill a small batch synchronously for a fast
     // first response, then top up to target size in the background.
     await fillQueueForUser(userId, queueConfig.deliverBatchSize);
     after(() => fillQueueForUser(userId, queueConfig.targetSize - queueConfig.deliverBatchSize));

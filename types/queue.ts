@@ -10,6 +10,7 @@ export type CachedMovie = MovieCandidate & {
   voteCount?: number;
   originalLanguage?: string;
   sourceTier?: SourceTier;
+  trailerKey?: string;
 };
 
 export type QueuedMovie = MovieCandidate & {

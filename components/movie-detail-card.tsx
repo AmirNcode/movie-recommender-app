@@ -1,10 +1,13 @@
 'use client';
 
+import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Eye, Film, Heart, Plus, ThumbsDown } from 'lucide-react';
+import { Check, Eye, Film, Heart, Loader2, PlayCircle, Plus, Share2, ThumbsDown, X } from 'lucide-react';
+import { getTrailer, getWatchProviders, shareRecommendation } from '@/actions/movies';
+import { WatchProvidersRow } from '@/components/watch-providers-row';
 import type { MovieDetail } from '@/types/library';
-import type { SwipeAction } from '@/types/movie';
+import type { SwipeAction, WatchProviderData } from '@/types/movie';
 
 function isTrustedPosterUrl(url: string | undefined): url is string {
   return typeof url === 'string' && url.startsWith('https://image.tmdb.org/');
@@ -33,6 +36,141 @@ export function MovieDetailCard({
   showRatingActions?: boolean;
   backLabel?: string;
 }) {
+  const [providers, setProviders] = useState<WatchProviderData | null>(null);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [providersError, setProvidersError] = useState<string | null>(null);
+  const [trailerKey, setTrailerKey] = useState<string | null>(null);
+  const [showTrailer, setShowTrailer] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const tmdbId = movie.tmdbId;
+  const canShare = Boolean(movie.recommendationReason) && Boolean(tmdbId) && tmdbId > 0;
+
+  async function handleShare() {
+    if (isSharing) return;
+    setIsSharing(true);
+    setShareMessage(null);
+
+    const copyToClipboard = async (url: string) => {
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareMessage('Link copied to clipboard');
+      } catch {
+        setShareMessage('Could not copy the link.');
+      }
+    };
+
+    try {
+      const result = await shareRecommendation({
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        year: movie.year,
+        posterUrl: movie.posterUrl,
+        reason: movie.recommendationReason ?? undefined,
+      });
+
+      if (!result.ok) {
+        setShareMessage(result.message);
+        return;
+      }
+
+      const url = `${window.location.origin}${result.data.url}`;
+
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share({ title: `Watch ${movie.title}`, url });
+          setShareMessage('Shared!');
+        } catch (err) {
+          // A cancelled share sheet isn't an error; anything else → clipboard.
+          if ((err as { name?: string })?.name !== 'AbortError') {
+            await copyToClipboard(url);
+          }
+        }
+      } else {
+        await copyToClipboard(url);
+      }
+    } catch {
+      setShareMessage('Could not create a share link.');
+    } finally {
+      setIsSharing(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProviders() {
+      await Promise.resolve();
+      if (cancelled) return;
+
+      if (!tmdbId || tmdbId <= 0) {
+        setProviders(null);
+        setProvidersError(null);
+        setProvidersLoading(false);
+        return;
+      }
+
+      setProvidersLoading(true);
+      setProvidersError(null);
+
+      try {
+        const result = await getWatchProviders(tmdbId);
+        if (cancelled) return;
+        if (result.ok) {
+          setProviders(result.data);
+        } else {
+          setProviders(null);
+          setProvidersError(result.message);
+        }
+      } catch {
+        if (!cancelled) {
+          setProviders(null);
+          setProvidersError('Streaming providers are unavailable right now.');
+        }
+      } finally {
+        if (!cancelled) setProvidersLoading(false);
+      }
+    }
+
+    void loadProviders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTrailer() {
+      await Promise.resolve();
+      if (cancelled) return;
+
+      setShowTrailer(false);
+      setTrailerKey(null);
+      if (!tmdbId || tmdbId <= 0) return;
+
+      try {
+        const result = await getTrailer(tmdbId);
+        if (cancelled) return;
+        setTrailerKey(result.ok ? result.data.trailerKey : null);
+      } catch {
+        if (!cancelled) setTrailerKey(null);
+      }
+    }
+
+    void loadTrailer();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbId]);
+
+  const watchProvidersRow = useMemo(
+    () => <WatchProvidersRow providers={providers} isLoading={providersLoading} error={providersError} />,
+    [providers, providersError, providersLoading]
+  );
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col font-sans overflow-hidden">
       {isTrustedPosterUrl(movie.posterUrl) && (
@@ -64,6 +202,41 @@ export function MovieDetailCard({
               {isInWatchlist ? <Check size={24} className="text-green-400" /> : <Plus size={24} />}
             </button>
           ) : null}
+
+          {canShare ? (
+            <button
+              onClick={() => void handleShare()}
+              disabled={isSharing}
+              aria-label="Share this recommendation"
+              className="absolute top-4 left-4 z-50 w-12 h-12 rounded-full bg-black/40 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/60 transition-colors border border-white/20 shadow-lg disabled:opacity-60"
+            >
+              {isSharing ? <Loader2 size={22} className="animate-spin" /> : <Share2 size={22} />}
+            </button>
+          ) : null}
+
+          {trailerKey ? (
+            <button
+              onClick={() => setShowTrailer(true)}
+              aria-label="Watch trailer"
+              className="absolute left-1/2 top-[30%] -translate-x-1/2 -translate-y-1/2 z-30 flex items-center gap-2 rounded-full bg-black/50 backdrop-blur-md text-white px-5 py-3 border border-white/20 shadow-lg hover:bg-black/70 transition-colors"
+            >
+              <PlayCircle size={20} />
+              <span className="text-xs font-bold uppercase tracking-widest">Trailer</span>
+            </button>
+          ) : null}
+
+          <AnimatePresence>
+            {shareMessage && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: -4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center z-50 px-4 py-2 bg-black/80 backdrop-blur-md text-white text-xs font-mono rounded-full border border-white/10 shadow-xl whitespace-nowrap max-w-[90%]"
+              >
+                {shareMessage}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <AnimatePresence>
             {watchlistMessage && (
@@ -110,6 +283,7 @@ export function MovieDetailCard({
                   <p className="text-pink-100/90 leading-relaxed text-sm italic mb-6">{movie.recommendationReason}</p>
                 </>
               ) : null}
+              <div className="mb-5">{watchProvidersRow}</div>
               <div className="pt-4 border-t border-white/10 pb-2">
                 <p className="text-white/40 text-[10px] uppercase tracking-widest font-mono">Dir. {movie.director}</p>
               </div>
@@ -140,6 +314,37 @@ export function MovieDetailCard({
           </button>
         </div>
       </main>
+
+      <AnimatePresence>
+        {showTrailer && trailerKey ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4"
+            onClick={() => setShowTrailer(false)}
+          >
+            <div className="relative w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowTrailer(false)}
+                aria-label="Close trailer"
+                className="absolute -top-11 right-0 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <div className="aspect-video w-full overflow-hidden rounded-xl border border-white/10 bg-black">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${trailerKey}?autoplay=1`}
+                  title={`${movie.title} trailer`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="h-full w-full"
+                />
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

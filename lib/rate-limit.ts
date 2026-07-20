@@ -29,6 +29,28 @@ export interface RateLimitResult {
 }
 
 /**
+ * Parses the raw `check_rate_limit` RPC response into a {@link RateLimitResult}.
+ *
+ * The RPC's return type is untyped Json; the function body always returns a
+ * JSON object, but the Supabase client may hand it back as a string in some
+ * code paths, so both shapes are handled defensively. Falls back to the
+ * configured window when the backend omits `retryAfter` on a denial.
+ */
+export function parseRateLimitResult(data: unknown, windowMs: number): RateLimitResult {
+    const parsed: { allowed: boolean; retryAfter?: number } | null =
+        typeof data === 'string' ? JSON.parse(data) : (data as { allowed: boolean; retryAfter?: number } | null);
+
+    if (parsed && parsed.allowed === false) {
+        return {
+            allowed: false,
+            retryAfter: parsed.retryAfter || Math.ceil(windowMs / 1000),
+        };
+    }
+
+    return { allowed: true };
+}
+
+/**
  * Rate limit configurations per action name.
  * Add new actions here as needed.
  */
@@ -37,9 +59,27 @@ const ACTION_LIMITS: Record<string, RateLimitConfig> = {
     getMovieRecommendation: { maxRequests: 10, windowMs: 60_000, failMode: 'closed' },
     getQueuedMovies: { maxRequests: 30, windowMs: 60_000 },
     refillQueuedMovies: { maxRequests: 10, windowMs: 60_000 },
+    getOnboardingMovies: { maxRequests: 10, windowMs: 60_000 },
     // Fast swiping is legitimate; 2/sec sustained is not.
     saveSwipe: { maxRequests: 120, windowMs: 60_000 },
     setWatchlistItem: { maxRequests: 30, windowMs: 60_000 },
+    getWatchProviders: { maxRequests: 30, windowMs: 60_000 },
+    getTrailer: { maxRequests: 30, windowMs: 60_000 },
+    shareRecommendation: { maxRequests: 10, windowMs: 60_000 },
+    getPreferences: { maxRequests: 30, windowMs: 60_000 },
+    setPreferences: { maxRequests: 10, windowMs: 60_000 },
+    // Movie Night (S6). Voting is fast-swipe cadence like saveSwipe; the rest
+    // are low-frequency lifecycle calls.
+    createMovieNight: { maxRequests: 10, windowMs: 60_000 },
+    joinMovieNight: { maxRequests: 20, windowMs: 60_000 },
+    getMovieNight: { maxRequests: 60, windowMs: 60_000 },
+    voteMovieNight: { maxRequests: 120, windowMs: 60_000 },
+    addMovieNightToWatchlists: { maxRequests: 20, windowMs: 60_000 },
+    // Billing (S14). Low-frequency; each hits the Stripe API.
+    createCheckoutSession: { maxRequests: 10, windowMs: 60_000 },
+    createPortalSession: { maxRequests: 10, windowMs: 60_000 },
+    // Destructive and irreversible; 2/hour is generous for a legitimate user.
+    deleteAccount: { maxRequests: 2, windowMs: 60 * 60_000 },
 };
 
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -90,17 +130,5 @@ export async function checkRateLimit(
         return { allowed: config.failMode !== 'closed' };
     }
 
-    // The RPC's return type is untyped Json; the function body always
-    // returns a JSON object, but parse the string case defensively.
-    const parsed: { allowed: boolean; retryAfter?: number } | null =
-        typeof data === 'string' ? JSON.parse(data) : (data as { allowed: boolean; retryAfter?: number } | null);
-
-    if (parsed && parsed.allowed === false) {
-        return {
-            allowed: false,
-            retryAfter: parsed.retryAfter || Math.ceil(config.windowMs / 1000),
-        };
-    }
-
-    return { allowed: true };
+    return parseRateLimitResult(data, config.windowMs);
 }

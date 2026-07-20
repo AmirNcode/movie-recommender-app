@@ -14,12 +14,108 @@ export type Database = {
   }
   public: {
     Tables: {
+      movie_night_cards: {
+        Row: {
+          night_id: string
+          rank: number
+          tmdb_movie_id: number
+        }
+        Insert: {
+          night_id: string
+          rank: number
+          tmdb_movie_id: number
+        }
+        Update: {
+          night_id?: string
+          rank?: number
+          tmdb_movie_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "movie_night_cards_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "movie_nights"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "movie_night_cards_tmdb_movie_id_fkey"
+            columns: ["tmdb_movie_id"]
+            isOneToOne: false
+            referencedRelation: "movies_cache"
+            referencedColumns: ["tmdb_movie_id"]
+          },
+        ]
+      }
+      movie_night_votes: {
+        Row: {
+          created_at: string
+          liked: boolean
+          night_id: string
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          liked: boolean
+          night_id: string
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          liked?: boolean
+          night_id?: string
+          tmdb_movie_id?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "movie_night_votes_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "movie_nights"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      movie_nights: {
+        Row: {
+          code: string
+          created_at: string
+          guest_id: string | null
+          host_id: string
+          id: string
+          matched_tmdb_id: number | null
+          status: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          guest_id?: string | null
+          host_id: string
+          id?: string
+          matched_tmdb_id?: number | null
+          status?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          guest_id?: string | null
+          host_id?: string
+          id?: string
+          matched_tmdb_id?: number | null
+          status?: string
+        }
+        Relationships: []
+      }
       movies_cache: {
         Row: {
           cached_at: string
           director: string | null
           genre: string | null
           original_language: string | null
+          pool_rank: number | null
           popularity: number | null
           poster_url: string | null
           release_date: string | null
@@ -28,9 +124,12 @@ export type Database = {
           title: string
           tmdb_movie_id: number
           top_actors: string[]
+          trailer_key: string | null
           updated_at: string
           vote_average: number | null
           vote_count: number | null
+          watch_providers: Json | null
+          watch_providers_fetched_at: string | null
           year: number | null
         }
         Insert: {
@@ -38,6 +137,7 @@ export type Database = {
           director?: string | null
           genre?: string | null
           original_language?: string | null
+          pool_rank?: number | null
           popularity?: number | null
           poster_url?: string | null
           release_date?: string | null
@@ -46,9 +146,12 @@ export type Database = {
           title: string
           tmdb_movie_id: number
           top_actors?: string[]
+          trailer_key?: string | null
           updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
+          watch_providers?: Json | null
+          watch_providers_fetched_at?: string | null
           year?: number | null
         }
         Update: {
@@ -56,6 +159,7 @@ export type Database = {
           director?: string | null
           genre?: string | null
           original_language?: string | null
+          pool_rank?: number | null
           popularity?: number | null
           poster_url?: string | null
           release_date?: string | null
@@ -64,9 +168,12 @@ export type Database = {
           title?: string
           tmdb_movie_id?: number
           top_actors?: string[]
+          trailer_key?: string | null
           updated_at?: string
           vote_average?: number | null
           vote_count?: number | null
+          watch_providers?: Json | null
+          watch_providers_fetched_at?: string | null
           year?: number | null
         }
         Relationships: []
@@ -74,16 +181,19 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string | null
+          digest_opt_in: boolean
           id: string
           name: string | null
         }
         Insert: {
           created_at?: string | null
+          digest_opt_in?: boolean
           id: string
           name?: string | null
         }
         Update: {
           created_at?: string | null
+          digest_opt_in?: boolean
           id?: string
           name?: string | null
         }
@@ -104,6 +214,102 @@ export type Database = {
           count?: number | null
           key?: string
           window_start?: string | null
+        }
+        Relationships: []
+      }
+      recommendations_log: {
+        Row: {
+          created_at: string
+          engine: string
+          id: string
+          movie_title: string | null
+          output_tokens: number | null
+          prompt_tokens: number | null
+          reason: string | null
+          tmdb_movie_id: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          engine?: string
+          id?: string
+          movie_title?: string | null
+          output_tokens?: number | null
+          prompt_tokens?: number | null
+          reason?: string | null
+          tmdb_movie_id?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          engine?: string
+          id?: string
+          movie_title?: string | null
+          output_tokens?: number | null
+          prompt_tokens?: number | null
+          reason?: string | null
+          tmdb_movie_id?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      shared_recommendations: {
+        Row: {
+          created_at: string
+          id: string
+          movie_title: string
+          movie_year: number | null
+          poster_url: string | null
+          reason: string | null
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          movie_title: string
+          movie_year?: number | null
+          poster_url?: string | null
+          reason?: string | null
+          tmdb_movie_id: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          movie_title?: string
+          movie_year?: number | null
+          poster_url?: string | null
+          reason?: string | null
+          tmdb_movie_id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          current_period_end: string | null
+          status: string
+          stripe_customer_id: string
+          stripe_subscription_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          current_period_end?: string | null
+          status?: string
+          stripe_customer_id: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          current_period_end?: string | null
+          status?: string
+          stripe_customer_id?: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -220,6 +426,33 @@ export type Database = {
           },
         ]
       }
+      user_preferences: {
+        Row: {
+          genres: number[]
+          min_vote: number | null
+          updated_at: string
+          user_id: string
+          year_from: number | null
+          year_to: number | null
+        }
+        Insert: {
+          genres?: number[]
+          min_vote?: number | null
+          updated_at?: string
+          user_id: string
+          year_from?: number | null
+          year_to?: number | null
+        }
+        Update: {
+          genres?: number[]
+          min_vote?: number | null
+          updated_at?: string
+          user_id?: string
+          year_from?: number | null
+          year_to?: number | null
+        }
+        Relationships: []
+      }
       watchlists: {
         Row: {
           created_at: string | null
@@ -288,6 +521,27 @@ export type Database = {
         Args: { p_movies: Json; p_user_id: string }
         Returns: number
       }
+      fill_movie_night_cards: {
+        Args: {
+          p_count: number
+          p_guest: string
+          p_host: string
+          p_night_id: string
+        }
+        Returns: number
+      }
+      fill_queue_from_pool: {
+        Args: {
+          p_count: number
+          p_genres?: string[]
+          p_min_vote?: number
+          p_user_id: string
+          p_year_from?: number
+          p_year_to?: number
+        }
+        Returns: number
+      }
+      rebuild_movie_pool: { Args: { p_tmdb_ids: number[] }; Returns: number }
       record_swipe_event: {
         Args: {
           p_action: Database["public"]["Enums"]["swipe_action"]
@@ -302,6 +556,10 @@ export type Database = {
           p_tmdb_movie_id: number
         }
         Returns: boolean
+      }
+      resolve_movie_night: {
+        Args: { p_night_id: string; p_tmdb_id: number }
+        Returns: number
       }
     }
     Enums: {

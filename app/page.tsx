@@ -11,16 +11,20 @@ import { getMovieRecommendation, saveSwipe } from '@/actions/movies';
 import { getQueuedMovies, refillQueuedMovies } from '@/actions/queue';
 import { getCurrentUserProfile, getSwipeHistory } from '@/actions/library';
 import { getWatchlistItems, isMovieInWatchlist, setWatchlistItem } from '@/actions/watchlist';
+import { getPreferences } from '@/actions/preferences';
 import { AppHeader } from '@/components/app-header';
 import { ErrorBanner } from '@/components/error-banner';
+import { FilterPanel } from '@/components/filter-panel';
 import { HistoryPanel } from '@/components/history-panel';
 import { MovieDetailCard } from '@/components/movie-detail-card';
 import { ProfilePanel } from '@/components/profile-panel';
 import { SwipeCard } from '@/components/swipe-card';
 import { SwipeControls } from '@/components/swipe-controls';
+import { UpgradeModal } from '@/components/upgrade-modal';
 import { WatchlistPanel } from '@/components/watchlist-panel';
 import type { HistoryItem, MovieDetail, ProfileDetails, WatchlistItem } from '@/types/library';
 import type { Movie, SwipeAction, SwipedMovie, Recommendation } from '@/types/movie';
+import type { UserPreferences } from '@/types/preferences';
 import type { ActionFailure } from '@/types/actions';
 
 const LOADING_MESSAGES = [
@@ -64,7 +68,7 @@ const LOADING_MESSAGES = [
   'Spending too much on marketing...',
 ];
 
-type View = 'swipe' | 'recommendation' | 'watchlist' | 'history' | 'profile';
+type View = 'swipe' | 'recommendation' | 'watchlist' | 'history' | 'profile' | 'filters';
 type DetailContext = 'watchlist' | 'history';
 
 type SelectedDetail = {
@@ -130,9 +134,11 @@ export default function Filmmoo() {
   const [isRecommending, setIsRecommending] = useState(false);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [profile, setProfile] = useState<ProfileDetails | null>(null);
+  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<SelectedDetail | null>(null);
   const [isInWatchlist, setIsInWatchlist] = useState(false);
   const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null);
@@ -178,6 +184,12 @@ export default function Filmmoo() {
   const refreshProfile = useCallback(async () => {
     const result = await getCurrentUserProfile();
     if (result.ok) setProfile(result.data);
+    else reportFailure(result);
+  }, [reportFailure]);
+
+  const refreshPreferences = useCallback(async () => {
+    const result = await getPreferences();
+    if (result.ok) setPreferences(result.data);
     else reportFailure(result);
   }, [reportFailure]);
 
@@ -336,7 +348,11 @@ export default function Filmmoo() {
     try {
       const result = await getMovieRecommendation();
       if (!result.ok) {
-        reportFailure(result);
+        if (result.code === 'quota_exceeded') {
+          setShowUpgradeModal(true);
+        } else {
+          reportFailure(result);
+        }
       } else if (result.data) {
         setRecommendation(result.data);
         setActiveView('recommendation');
@@ -445,8 +461,29 @@ export default function Filmmoo() {
           showError(error instanceof Error ? error.message : 'Failed to load your profile.');
         })
         .finally(() => setIsLoadingLibraryView(false));
+      return;
     }
-  }, [refreshHistory, refreshProfile, refreshWatchlist, showError]);
+
+    if (view === 'filters') {
+      setIsLoadingLibraryView(true);
+      void refreshPreferences()
+        .catch((error) => {
+          showError(error instanceof Error ? error.message : 'Failed to load your filters.');
+        })
+        .finally(() => setIsLoadingLibraryView(false));
+    }
+  }, [refreshHistory, refreshPreferences, refreshProfile, refreshWatchlist, showError]);
+
+  const handleFiltersSaved = useCallback((genres: number[]) => {
+    setPreferences((prev) => (prev ? { ...prev, genres } : { genres, yearFrom: null, yearTo: null, minVote: null }));
+    // The server already discarded the active queue; drop the local deck too
+    // so the next fetch rebuilds it against the new filter instead of serving
+    // cards that were fetched before the preference change.
+    setMovies([]);
+    setCurrentIndex(0);
+    exhaustedDeckRef.current = false;
+    void fetchMoreMovies();
+  }, [fetchMoreMovies]);
 
   const handleChangeView = useCallback((view: View) => {
     setSelectedDetail(null);
@@ -485,6 +522,7 @@ export default function Filmmoo() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col overflow-hidden font-sans">
       <ErrorBanner message={errorMessage} />
+      <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} />
       <AppHeader
         activeView={activeView}
         onChangeView={(view) => void handleChangeView(view)}
@@ -555,6 +593,17 @@ export default function Filmmoo() {
             </div>
           ) : (
             <ProfilePanel key={`${profile?.email ?? ''}:${profile?.name ?? ''}`} profile={profile} />
+          )}
+        </main>
+      ) : activeView === 'filters' ? (
+        <main className="flex-1 relative flex flex-col items-center justify-center px-6 pb-6 pt-0">
+          {isLoadingLibraryView && !preferences ? (
+            <div className="flex flex-col items-center justify-center text-white/50">
+              <Loader2 className="animate-spin mb-4" size={32} />
+              <p className="font-mono text-sm">Loading filters...</p>
+            </div>
+          ) : (
+            <FilterPanel key={preferences?.genres.join(',') ?? ''} preferences={preferences} onSaved={handleFiltersSaved} />
           )}
         </main>
       ) : (

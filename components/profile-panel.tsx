@@ -1,17 +1,71 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { updateEmail, updatePassword, updateProfileName } from '@/actions/library';
-import { logout } from '@/actions/auth';
+import { Sparkles } from 'lucide-react';
+import { updateDigestOptIn, updateEmail, updatePassword, updateProfileName } from '@/actions/library';
+import { deleteAccount, logout } from '@/actions/auth';
+import { createCheckoutSession, createPortalSession } from '@/actions/billing';
 import type { ProfileDetails } from '@/types/library';
 
 export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
   const [name, setName] = useState(profile?.name ?? '');
   const [email, setEmail] = useState(profile?.email ?? '');
   const [password, setPassword] = useState('');
+  const [digestOptIn, setDigestOptIn] = useState(profile?.digestOptIn ?? false);
+  const [isDigestPending, setIsDigestPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeleting, startDeleteTransition] = useTransition();
+  const [isBillingPending, setIsBillingPending] = useState(false);
+
+  const handleBilling = async (action: 'upgrade' | 'manage') => {
+    setMessage(null);
+    setError(null);
+    setIsBillingPending(true);
+    try {
+      const result =
+        action === 'manage' ? await createPortalSession() : await createCheckoutSession('monthly');
+      if (result.ok) {
+        window.location.assign(result.data.url);
+        return;
+      }
+      setError(result.message);
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setIsBillingPending(false);
+    }
+  };
+
+  const handleDigestToggle = async () => {
+    const next = !digestOptIn;
+    setDigestOptIn(next);
+    setIsDigestPending(true);
+    setMessage(null);
+    setError(null);
+    const result = await updateDigestOptIn(next);
+    setIsDigestPending(false);
+    if (result.status === 'error') {
+      setDigestOptIn(!next);
+      setError(result.error);
+      return;
+    }
+    setMessage(next ? 'Weekly digest enabled.' : 'Weekly digest disabled.');
+  };
+
+  const handleDelete = () => {
+    setMessage(null);
+    setError(null);
+    startDeleteTransition(async () => {
+      // On success the action clears the session and redirects to /signup, so
+      // control only returns here on failure.
+      const result = await deleteAccount(deleteConfirmText);
+      if (result.status === 'error') setError(result.error);
+    });
+  };
 
   const runAction = (fn: () => Promise<{ status: 'success'; message?: string } | { status: 'error'; error: string }>) => {
     setMessage(null);
@@ -85,9 +139,99 @@ export function ProfilePanel({ profile }: { profile: ProfileDetails | null }) {
         <button disabled={isPending || password.length < 8} className="w-full h-11 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold disabled:opacity-60">Update password</button>
       </form>
 
+      <div className="flex items-center justify-between gap-3 p-4 rounded-2xl border border-white/10 bg-black/20">
+        <div>
+          <div className="text-sm font-semibold text-white">Weekly digest email</div>
+          <p className="text-xs text-white/50 mt-0.5">Your top 3 unseen picks, every Monday.</p>
+        </div>
+        <button
+          onClick={() => void handleDigestToggle()}
+          disabled={isDigestPending}
+          role="switch"
+          aria-checked={digestOptIn}
+          aria-label="Toggle weekly digest email"
+          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-60 ${digestOptIn ? 'bg-white' : 'bg-white/15'}`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${digestOptIn ? 'translate-x-5 bg-black' : 'translate-x-0 bg-white/70'}`}
+          />
+        </button>
+      </div>
+
+      <div className="p-4 rounded-2xl border border-white/10 bg-black/20 space-y-3">
+        <div className="flex items-center gap-2 text-amber-300">
+          <Sparkles size={16} />
+          <span className="text-sm font-semibold text-white">
+            {profile?.isPro ? 'Filmmoo Pro' : 'Upgrade to Pro'}
+          </span>
+        </div>
+        <p className="text-xs text-white/50">
+          {profile?.isPro
+            ? 'Unlimited recommendations, Movie Nights, and full deck filters are active.'
+            : 'Unlock unlimited recommendations, Movie Nights, and full deck filters.'}
+        </p>
+        <button
+          onClick={() => void handleBilling(profile?.isPro ? 'manage' : 'upgrade')}
+          disabled={isBillingPending}
+          className="w-full h-11 rounded-2xl bg-white text-black font-semibold disabled:opacity-60"
+        >
+          {isBillingPending ? 'Loading…' : profile?.isPro ? 'Manage subscription' : 'Upgrade to Pro'}
+        </button>
+      </div>
+
       <form action={logout}>
         <button className="w-full h-11 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-200 font-semibold">Log out</button>
       </form>
+
+      <div className="pt-4 border-t border-red-500/20 space-y-3">
+        <div className="text-xs uppercase tracking-widest text-red-400/70">Danger zone</div>
+        {!confirmingDelete ? (
+          <button
+            onClick={() => {
+              setConfirmingDelete(true);
+              setMessage(null);
+              setError(null);
+            }}
+            className="w-full h-11 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-200 font-semibold"
+          >
+            Delete account
+          </button>
+        ) : (
+          <div className="space-y-3 p-4 rounded-2xl border border-red-500/30 bg-red-500/[0.06]">
+            <p className="text-xs leading-relaxed text-red-200/80">
+              This permanently deletes your account and all of your data — swipes, watchlist, and history. This
+              cannot be undone. Type <span className="font-mono font-bold text-red-100">DELETE</span> to confirm.
+            </p>
+            <input
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="DELETE"
+              aria-label="Type DELETE to confirm account deletion"
+              autoComplete="off"
+              className="w-full h-12 bg-black/40 border border-red-500/30 rounded-2xl px-4 text-white font-mono"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setConfirmingDelete(false);
+                  setDeleteConfirmText('');
+                }}
+                disabled={isDeleting}
+                className="flex-1 h-11 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting || deleteConfirmText !== 'DELETE'}
+                className="flex-1 h-11 rounded-2xl bg-red-500 text-white font-semibold disabled:opacity-40"
+              >
+                {isDeleting ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

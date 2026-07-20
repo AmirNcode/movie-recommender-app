@@ -36,7 +36,7 @@ export default function SignupPage() {
       return;
     }
 
-    router.push('/');
+    router.push('/onboarding');
     router.refresh();
   };
 
@@ -44,7 +44,7 @@ export default function SignupPage() {
     setError(null);
     setIsGoogleLoading(true);
     const supabase = createClient();
-    const redirectTo = `${window.location.origin}/auth/callback?next=/`;
+    const redirectTo = `${window.location.origin}/auth/callback?next=/onboarding`;
     const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
